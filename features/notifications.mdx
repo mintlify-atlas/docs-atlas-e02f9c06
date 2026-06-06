@@ -1,7 +1,7 @@
 ---
-title: "Real-Time Notifications with Server-Sent Events"
+title: "Real-Time Notifications via Server-Sent Events (SSE)"
 sidebarTitle: "Notifications"
-description: "StockManager pushes real-time alerts for low stock, sales, and admin actions using SSE. Learn how to connect, receive events, and manage notification state."
+description: "StockManager pushes real-time alerts for low stock, sales, and admin actions via SSE. Learn how to connect, receive events, and manage notification state."
 ---
 
 StockManager delivers in-app alerts without polling. Instead of having the browser ask the server "any news?" on a timer, the server pushes events over a persistent HTTP connection using the [Server-Sent Events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events) protocol. When a sale is recorded, a product drops below its minimum stock, or an admin performs an account action, the affected user's browser receives an event within milliseconds — no page reload required.
@@ -12,14 +12,14 @@ Opening a connection to this endpoint establishes a long-lived HTTP response wit
 
 **On connect** the server immediately sends an `init` event carrying the user's current unread notifications (up to 5) and total unread count:
 
-```
+```text
 event: init
 data: {"notifications": [...], "count": 3}
 ```
 
 **When a new notification arrives** for the connected user, the server sends an `update` event with the latest unread notifications (up to 10) and updated count:
 
-```
+```text
 event: update
 data: {"notifications": [...], "count": 4}
 ```
@@ -125,6 +125,8 @@ curl -X POST http://localhost:5000/api/notifications/create \
     "action_url": null
   }'
 ```
+
+**Successful response (HTTP 201):**
 
 ```json
 { "message": "Notificación creada exitosamente" }

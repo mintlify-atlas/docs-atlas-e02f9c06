@@ -61,11 +61,11 @@ Every time a product is created or updated, `check_and_notify_low_stock` runs au
 - The `notified_low_stock` flag is set to `1` so the same alert is not repeated on every subsequent save.
 - Once the product is restocked and `quantity >= min_quantity`, the flag resets to `0`, re-arming the alert for the next time stock drops.
 
-The dashboard summary (`GET /api/stats`) returns the `low_stock` count and `low_stock_list` (the 10 most critical items by quantity) so you can see the situation at a glance.
+The dashboard summary (`GET /api/stats`) returns the `low_stock` count and `low_stock_list` (up to 10 products where `quantity <= min_quantity`, sorted by quantity ascending) so you can see the situation at a glance.
 
 ## Expiration tracking
 
-Products with an `expiration_date` set are monitored continuously. The dashboard stats endpoint (`GET /api/stats`) returns `expire_soon`, a count of active products whose expiration date falls within the next **7 days**. Use this figure to drive first-expiry-first-out workflows or to create manual notifications for your team.
+Products with an `expiration_date` set are monitored continuously. The dashboard stats endpoint (`GET /api/stats`) returns `expire_soon`, a count of products whose `expiration_date` is on or before 7 days from today — this includes items that are already past their expiration date and products of any status. Use this figure to drive first-expiry-first-out workflows or to create manual notifications for your team.
 
 ## API examples
 

@@ -1,5 +1,5 @@
 ---
-title: "Business Analytics Dashboard and KPIs"
+title: "Business Analytics, KPIs and Sales Metrics Dashboard"
 sidebarTitle: "Metrics"
 description: "StockManager's analytics module delivers revenue KPIs, sales-over-time charts, top-product rankings, weekday/hour heatmaps, and inventory forecasts."
 ---
@@ -15,8 +15,8 @@ This endpoint requires authentication and returns a single JSON object with the 
 | `products` | integer | Total number of products in the catalog |
 | `low_stock` | integer | Products where `quantity <= min_quantity` and `quantity > 0` |
 | `sales_today` | integer | Number of sales transactions recorded today |
-| `low_stock_list` | array | Top 10 products closest to running out (sorted by quantity ascending) |
-| `expire_soon` | integer | Active products expiring within the next 7 days |
+| `low_stock_list` | array | Up to 10 products where `quantity <= min_quantity`, sorted by quantity ascending |
+| `expire_soon` | integer | Products whose `expiration_date` is on or before 7 days from today (includes already-expired items) |
 | `total_inventory_value` | float | Sum of `quantity × price` for all active products |
 
 Each object in `low_stock_list` contains `id`, `name`, `sku` (barcode), and `stock`.

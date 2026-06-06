@@ -373,7 +373,7 @@ curl -b cookies.txt "http://localhost:5000/api/suggest/vendors?q=carlos"
 
 Both endpoints below operate on the **currently authenticated user's** own account — no admin role is required.
 
-### PUT /api/settings/profile
+### PUT /api/api/settings/profile
 
 Updates the authenticated user's e-mail address.
 
@@ -397,7 +397,7 @@ Updates the authenticated user's e-mail address.
 | `400` | `email` is missing or malformed. |
 
 ```bash
-curl -X PUT http://localhost:5000/api/settings/profile \
+curl -X PUT http://localhost:5000/api/api/settings/profile \
   -b cookies.txt \
   -H "Content-Type: application/json" \
   -d '{"email": "new_address@example.com"}'
@@ -405,7 +405,7 @@ curl -X PUT http://localhost:5000/api/settings/profile \
 
 ---
 
-### PUT /api/settings/password
+### PUT /api/api/settings/password
 
 Changes the authenticated user's password. The current password must be supplied and verified before the new one is stored.
 
@@ -438,7 +438,7 @@ Changes the authenticated user's password. The current password must be supplied
 | `401` | `current_password` is incorrect. |
 
 ```bash
-curl -X PUT http://localhost:5000/api/settings/password \
+curl -X PUT http://localhost:5000/api/api/settings/password \
   -b cookies.txt \
   -H "Content-Type: application/json" \
   -d '{

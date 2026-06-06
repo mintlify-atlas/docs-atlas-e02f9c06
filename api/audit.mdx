@@ -1,7 +1,7 @@
 ---
-title: "Audit API — Query the Full Change History"
+title: "Audit API — Browse and Filter the Full Change History"
 sidebarTitle: "Audit"
-description: "Query StockManager's audit trail by user, entity type, action, or date range. Track every create, update, delete, login, and approval event across the system."
+description: "Query StockManager's audit trail by user, entity type, action, or date range. Track every create, update, delete, login, and approval event."
 ---
 
 StockManager maintains a persistent audit log of every meaningful action taken through the application. Every time a product is created, a user is updated, a sale is approved, or a session is started, a structured record is written to the `audit_log` table — capturing who did it, what changed, when it happened, and whether the operation succeeded. The three endpoints below let you query that log by user, filter it system-wide, or trace the full change trail for a single entity.

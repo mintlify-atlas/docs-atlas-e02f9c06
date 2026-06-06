@@ -1,7 +1,7 @@
 ---
-title: "Running StockManager as a Desktop Application"
+title: "Running StockManager as a Native Desktop Application"
 sidebarTitle: "Desktop Mode"
-description: "StockManager wraps its Flask server in a PyWebView native window. Learn how to run it, build a standalone executable with PyInstaller, and configure window settings."
+description: "StockManager wraps its Flask server in a PyWebView window. Run in dev mode, build a standalone executable with PyInstaller, or configure window settings."
 ---
 
 StockManager is a web application at its core, but it ships with a native desktop wrapper powered by [PyWebView](https://pywebview.flowrl.com/). When you run `python main.py`, the application starts the Waitress WSGI server in a background thread and then opens a platform-native window that points to `http://127.0.0.1:5000` — giving users a full desktop experience without requiring a separate browser. No web server setup, no exposed port visible to the network.

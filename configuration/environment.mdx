@@ -1,7 +1,7 @@
 ---
-title: "Environment Variables and Server Configuration"
+title: "Environment Variables and Server Configuration Guide"
 sidebarTitle: "Environment"
-description: "Configure StockManager's Flask secret key, server host and port, email settings for password resets, and debug mode via environment variables."
+description: "Configure StockManager's Flask secret key, SMTP credentials, log level, and database path using environment variables or a .env file."
 ---
 
 StockManager reads all runtime configuration from a `.env` file in the project root. The `python-dotenv` library loads this file automatically at boot — both in `main.py` (desktop mode) and in `tools/email.py` (for email delivery). Every setting listed below can be overridden by a real environment variable already present in the shell, which takes precedence over the file.
@@ -20,13 +20,6 @@ StockManager reads all runtime configuration from a `.env` file in the project r
 |---|---|---|---|
 | `FLASK_SECRET_KEY` | **Yes** | `"a"` | Signs and verifies Flask session cookies. Use a long, random string (e.g. output of `python -c "import secrets; print(secrets.token_hex(32))"`) in production. |
 
-### Server Binding
-
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `FLASK_HOST` | No | `127.0.0.1` | IP address the Waitress server binds to. Set to `0.0.0.0` to accept connections from other machines on the network. |
-| `FLASK_PORT` | No | `5000` | TCP port Waitress listens on. The PyWebView window connects to this same port. |
-
 ### Email (Password Resets)
 
 StockManager sends password-reset codes by email. All four variables must be set for email delivery to work; the application will raise an error at startup if they are absent and a reset is attempted.
@@ -42,6 +35,7 @@ StockManager sends password-reset codes by email. All four variables must be set
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
+| `APP_ENV` | No | unset | Set to `"development"` to enable `DEBUG`-level log output. When unset the logger defaults to `INFO` level. |
 | `DEBUG` | No | unset | Set to `1` to start Flask in debug mode via `run-dev.py`. Has no effect when running `main.py` directly (debug is hardcoded to `False` there). |
 | `DB_PATH` | No | `./data/stock.db` | Override the SQLite file path in development mode. Ignored when the app is running as a compiled executable. |
 
@@ -60,10 +54,6 @@ These two variables are set automatically by `main.py` on Linux using `os.enviro
 # ── Required ──────────────────────────────────────────────
 FLASK_SECRET_KEY=replace-this-with-a-long-random-string
 
-# ── Server (optional) ─────────────────────────────────────
-FLASK_HOST=127.0.0.1
-FLASK_PORT=5000
-
 # ── Email – password reset ─────────────────────────────────
 SMTP_SERVER=smtp.gmail.com
 SMTP_PORT=465
@@ -71,16 +61,19 @@ SMTP_USERNAME=your-address@gmail.com
 SMTP_PASSWORD=your-app-password
 
 # ── Development ────────────────────────────────────────────
+APP_ENV=development
 DEBUG=1
 DB_PATH=./data/stock.db
 ```
 
 ## Waitress Server Settings
 
-The following Waitress parameters are hardcoded in `main.py` and are not currently configurable via environment variables.
+The following Waitress parameters are hardcoded in `main.py` and are not configurable via environment variables.
 
 | Setting | Value | Description |
 |---|---|---|
+| `host` | `127.0.0.1` | IP address the Waitress server binds to. Loopback-only; the PyWebView window connects to this same address. |
+| `port` | `5000` | TCP port Waitress listens on. The PyWebView window connects to this same port. |
 | `threads` | `8` | Number of worker threads in the Waitress thread pool. |
 | `channel_timeout` | `30` s | Seconds before an idle HTTP connection is closed. |
 | `cleanup_interval` | `10` s | How often Waitress sweeps for expired channels. |

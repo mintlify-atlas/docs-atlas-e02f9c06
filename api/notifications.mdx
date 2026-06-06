@@ -1,5 +1,5 @@
 ---
-title: "Notifications API — SSE Stream and Management"
+title: "Notifications API — Real-Time SSE Stream and Management"
 sidebarTitle: "Notifications"
 description: "Retrieve, create, and mark notifications in StockManager. Connect to the SSE stream for real-time push updates on low stock, sales, and admin actions."
 ---
@@ -58,7 +58,7 @@ Only **one active stream per user** is maintained. When a second connection is o
 
 Fired once immediately on connect. Contains the last 5 unread notifications and the total unread count.
 
-```
+```text
 event: init
 data: {"notifications": [...], "count": 3}
 ```
@@ -67,7 +67,7 @@ data: {"notifications": [...], "count": 3}
 
 Fired whenever a new notification is created for this user (triggered server-side after `POST /api/notifications/create` or any automated alert). Contains the last 10 unread notifications and the updated count.
 
-```
+```text
 event: update
 data: {"notifications": [...], "count": 4}
 ```
@@ -76,7 +76,7 @@ data: {"notifications": [...], "count": 4}
 
 A keep-alive comment line is emitted every **25 seconds** to prevent proxy and browser timeouts.
 
-```
+```text
 : heartbeat
 ```
 

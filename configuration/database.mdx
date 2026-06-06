@@ -1,7 +1,7 @@
 ---
-title: "SQLite Database Architecture and Management"
+title: "SQLite Database Architecture and Schema Reference Guide"
 sidebarTitle: "Database"
-description: "StockManager uses SQLite with WAL mode, thread-local connections, and automatic schema initialization. Learn the schema, connection settings, and maintenance tasks."
+description: "StockManager uses SQLite with WAL mode and thread-local connections. Covers PRAGMA settings, all table schemas, indexes, and scheduled maintenance."
 ---
 
 StockManager stores all application data in a single SQLite file. The database is created and initialized automatically on first run by `bd/bdInstance.py` — no manual setup or migration command is required. The connection layer (`bd/bdConector.py`) applies a fixed set of PRAGMAs on every new connection and uses a thread-local pool to keep SQLite thread-safe inside Waitress's multi-threaded environment.
@@ -47,7 +47,7 @@ StockManager does **not** share a single `sqlite3.Connection` object across thre
 
 ```python
 with db.transaction() as cur:
-    cur.execute("INSERT INTO sells (vendor_id, date, payment_method) VALUES (?, ?, ?)", (...))
+    cur.execute("INSERT INTO sells (item_id, vendor_id, date, payment_method) VALUES (?, ?, ?, ?)", (...))
     cur.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (...))
 ```
 
@@ -93,8 +93,9 @@ Sales header — one row per transaction.
 | Column | Type | Notes |
 |---|---|---|
 | `id` | `INTEGER PRIMARY KEY AUTOINCREMENT` | |
-| `vendor_id` | `INTEGER` | References `users(id)` |
+| `item_id` | `INTEGER NOT NULL` | References `items(id)` |
 | `date` | `TEXT NOT NULL` | |
+| `vendor_id` | `INTEGER NOT NULL` | References `users(id)` |
 | `payment_method` | `TEXT` | Default `'Efectivo'` |
 
 ### `details`
@@ -108,7 +109,7 @@ Line items belonging to a sale.
 | `item_id` | `INTEGER NOT NULL` | References `items(id)` |
 | `quantity` | `INTEGER NOT NULL` | |
 | `price` | `REAL NOT NULL` | Unit price at time of sale |
-| `vendor_id` | `INTEGER` | Denormalized for query convenience |
+| `vendor_id` | `INTEGER NOT NULL` | References `users(id)`; denormalized for query convenience |
 | `payment_method` | `TEXT` | Default `'Efectivo'` |
 
 ### `users`
@@ -170,6 +171,33 @@ Short-lived codes sent to users during the password-reset flow.
 | `email` | `TEXT NOT NULL` | |
 | `code` | `TEXT NOT NULL` | Random reset code |
 | `created_at` | `TIMESTAMP` | Default `CURRENT_TIMESTAMP` |
+
+### `item_attributes`
+
+User-defined custom attribute definitions that can be attached to inventory items.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `INTEGER PRIMARY KEY AUTOINCREMENT` | |
+| `name` | `TEXT NOT NULL UNIQUE` | Display name of the attribute |
+| `code` | `TEXT NOT NULL UNIQUE` | Programmatic identifier |
+| `data_type` | `TEXT NOT NULL` | e.g. `'text'`, `'number'`, `'date'` |
+| `required` | `INTEGER` | `1` = mandatory on items; default `0` |
+| `status` | `INTEGER` | `1` = active; default `1` |
+
+### `item_attribute_values`
+
+Stores the per-item values for each custom attribute defined in `item_attributes`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `INTEGER PRIMARY KEY AUTOINCREMENT` | |
+| `item_id` | `INTEGER NOT NULL` | References `items(id)` |
+| `attribute_id` | `INTEGER NOT NULL` | References `item_attributes(id)` |
+| `value` | `TEXT` | Stored as text regardless of `data_type` |
+| `updated_at` | `TIMESTAMP` | Default `CURRENT_TIMESTAMP` |
+
+The combination `(item_id, attribute_id)` is unique, ensuring each item holds at most one value per attribute.
 
 ## Database Indexes
 

@@ -41,8 +41,13 @@ All blueprints are registered under the `/api` prefix in `api/__init__.py` and m
 | **Notifications** | `/api/notifications/*` |
 | **Applications** | `/api/applications` |
 | **Audit** | `/api/user/<id>`, `/api/all`, `/api/entity/<type>/<id>` |
-| **Settings** | `/api/settings/profile`, `/api/settings/password` |
+| **Settings** | `/api/api/settings/profile`, `/api/api/settings/password` |
+| **Debug** | `/api/debug/log`, `/api/debug/logs`, `/api/debug/command` |
 | **Health** | `/api/health` |
+
+<Note>
+  The `settings_api` blueprint is defined with `url_prefix='/api'` and is then registered on `api_bp`, which is itself mounted at `/api`. This means the settings routes are accessible at `/api/api/settings/profile` and `/api/api/settings/password` — a double-prefix that reflects the current source configuration.
+</Note>
 
 ## Pagination
 

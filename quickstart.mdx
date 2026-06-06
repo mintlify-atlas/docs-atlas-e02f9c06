@@ -45,7 +45,7 @@ This guide walks you through getting StockManager running on your local machine,
   </Step>
 
   <Step title="Start the development server">
-    Run the dev server using `run-dev.py`. This starts Flask in debug mode with hot reload enabled — any change to a Python file restarts the server automatically.
+    Run the dev server using `run-dev.py`. This calls `app.run(host="127.0.0.1", port=5000, debug=True)`, which starts Flask's built-in Werkzeug server with debug mode on. Debug mode enables the automatic reloader (the server restarts when you edit a Python file) and shows full tracebacks in the browser on errors.
 
     ```bash
     python run-dev.py
@@ -56,7 +56,6 @@ This guide walks you through getting StockManager running on your local machine,
     ```
      * Running on http://127.0.0.1:5000
      * Debug mode: on
-     * Restarting with stat
     ```
 
     The SQLite database is created automatically at `./data/stock.db` on this first launch. The `init_db()` routine creates all tables, applies any pending migrations, and inserts the default root user if none exists.

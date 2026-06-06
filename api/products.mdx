@@ -134,11 +134,7 @@ curl -X GET "http://localhost:5000/api/products?view_mode=in_stock&page=2&limit=
 
 ## GET /api/products/:id
 
-Returns the full details of a single active product identified by its numeric ID.
-
-<Note>
-  This endpoint only returns products with `status = 1`. Disabled products return `404` rather than `403` to avoid leaking catalog information.
-</Note>
+Returns the full details of a single product identified by its numeric ID. Unlike `GET /api/products`, this endpoint does **not** filter by status — it returns the product record regardless of whether it is active or disabled.
 
 ### Path Parameter
 
@@ -163,7 +159,7 @@ Returns the full details of a single active product identified by its numeric ID
 |--------|---------|
 | `200` | Product found and returned. |
 | `401` | No active session. |
-| `404` | Product does not exist or is disabled. |
+| `404` | No product exists with the given ID. |
 
 ---
 

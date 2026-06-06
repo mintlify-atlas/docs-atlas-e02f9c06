@@ -87,10 +87,11 @@ On **macOS** and **Windows** no extra system packages are required — PyWebView
     | `waitress` | 2.1.2 | Production WSGI server |
     | `pywebview` | 6.1 | Native desktop window wrapper |
     | `python-dotenv` | 1.0.0 | `.env` file loading |
-    | `python-barcode` | latest | Barcode generation for products |
-    | `Pillow` | latest | Image processing |
-    | `reportlab` | latest | PDF report generation |
-    | `pytz` | latest | Timezone handling |
+    | `requests` | unpinned | HTTP client for internal utilities |
+    | `python-barcode` | unpinned | Barcode generation for products |
+    | `Pillow` | unpinned | Image processing |
+    | `reportlab` | unpinned | PDF report generation |
+    | `pytz` | unpinned | Timezone handling |
     | `cffi` | 2.0.0 | C Foreign Function Interface |
 
     On **Linux**, also install the Python GObject bindings that PyWebView needs:
@@ -137,10 +138,7 @@ All configuration is read from the `.env` file (or from the actual environment).
 
 ### Server
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `FLASK_HOST` | `127.0.0.1` | IP address Waitress binds to. Keep this as `127.0.0.1` unless you intentionally want to expose the server on the local network. |
-| `FLASK_PORT` | `5000` | TCP port Waitress listens on. Change this if port 5000 is already in use on your machine. |
+The host, port, and thread count for the Waitress server are hardcoded in `main.py` (`127.0.0.1:5000`, 8 threads) and are not configurable via environment variables. To change them, edit the constants at the top of `main.py` before launching.
 
 ### Database
 
@@ -150,7 +148,7 @@ All configuration is read from the `.env` file (or from the actual environment).
 
 ### Email (optional)
 
-These variables enable the password-reset flow, which sends a 6-digit recovery code to the user's email address. All four must be set for email to work; if any are absent, the email sender initialises but calls will fail silently and log an error.
+These variables enable the password-reset flow, which sends a 6-digit recovery code to the user's email address. All four must be set; the module-level `EmailSender` instance is created at import time and calls `int(os.getenv('SMTP_PORT'))`, so a missing `SMTP_PORT` will raise a `TypeError` on startup. If email is not needed, omit all four variables and avoid importing the email module.
 
 | Variable | Description |
 |----------|-------------|
@@ -164,8 +162,9 @@ A fully populated `.env` looks like this:
 ```bash
 # .env
 FLASK_SECRET_KEY=a1b2c3d4e5f6...   # 64 hex chars recommended
-FLASK_HOST=127.0.0.1
-FLASK_PORT=5000
+
+# Optional: custom SQLite path (development only)
+DB_PATH=./data/stock.db
 
 # Optional: email for password reset
 SMTP_SERVER=smtp.gmail.com
@@ -188,7 +187,7 @@ StockManager supports two distinct running modes that serve different purposes.
 python run-dev.py
 ```
 
-This starts Flask's built-in development server with `debug=True` and auto-reload enabled. The server listens on `http://127.0.0.1:5000` and can be accessed in any browser. Use this mode when developing, testing API calls, or exploring the application for the first time. Jinja2 templates are reloaded on every request, and any Python error produces a detailed stack trace in the browser.
+This starts Flask's built-in development server with `debug=True`. The server listens on `http://127.0.0.1:5000` and can be accessed in any browser. Use this mode when developing, testing API calls, or exploring the application for the first time. Flask's debug mode enables the Werkzeug reloader (restarts the server when Python files change) and produces detailed stack traces in the browser on any unhandled error.
 
 ### Desktop application mode
 

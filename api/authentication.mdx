@@ -1,7 +1,7 @@
 ---
 title: "Authenticate with the StockManager API"
 sidebarTitle: "Authentication"
-description: "StockManager uses Flask session cookies for authentication. Log in via POST /api/login, receive a session cookie, and include it in all subsequent requests."
+description: "StockManager uses Flask session cookies for authentication. Log in via POST /api/login, get a session cookie, and send it with every subsequent request."
 ---
 
 StockManager's API uses **Flask session cookies** for authentication — there are no API keys, bearer tokens, or JWTs. When you log in successfully, the server creates a server-side session and responds with a `Set-Cookie` header. Every subsequent request must present that cookie; without it the server returns `401 Unauthenticated`. This model works transparently in browser contexts and is straightforward to replicate with any HTTP client that supports cookie jars.
@@ -56,7 +56,7 @@ After a successful login the server sets a `Set-Cookie` response header. The ses
 | `role` | Role string — one of `root`, `admin`, or `vendedor` |
 
 <Note>
-  `session.permanent = True` is set during the HTML-based login flow (`POST /login`). When logging in through the API endpoint (`POST /api/login`) the session lifetime follows Flask's default `PERMANENT_SESSION_LIFETIME` setting. If you need a long-lived session for automation, log in via the browser UI or configure `PERMANENT_SESSION_LIFETIME` in your deployment.
+  `session.permanent = True` is set during the HTML-based login flow (`POST /login`). The API endpoint (`POST /api/login`) does **not** set `session.permanent`, so the resulting session cookie carries no explicit expiry and will be discarded when the browser (or HTTP client) ends its session. For long-lived automation sessions, log in via the browser-based login flow instead.
 </Note>
 
 ## Making Authenticated Requests

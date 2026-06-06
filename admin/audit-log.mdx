@@ -13,7 +13,7 @@ The `audit_action` decorator from `tools/audit_decorator.py` wraps a Flask route
 ```python
 from tools.audit_decorator import audit_action
 
-@audit_action(entity_type, action_name, id_param)
+@audit_action(entity_type, action_name=None, id_param=None)
 def my_route_handler(...):
     ...
 ```
@@ -98,7 +98,7 @@ If an exception is raised inside the handler the decorator still writes an `erro
 ### User History
 
 ```bash
-GET /api/audit/user/<user_id>
+GET /api/user/<user_id>
 ```
 
 Returns the audit history for a specific user. A regular authenticated user can only query their own history. A `root` user can query any user ID.
@@ -139,7 +139,7 @@ Returns the audit history for a specific user. A regular authenticated user can 
 ### Full Audit Log
 
 ```bash
-GET /api/audit/all
+GET /api/all
 ```
 
 <Note>
@@ -153,7 +153,7 @@ Returns the complete audit log across all users and entities. Accepts the same q
 ### Entity Change Trail
 
 ```bash
-GET /api/audit/entity/<entity_type>/<entity_id>
+GET /api/entity/<entity_type>/<entity_id>
 ```
 
 Returns the chronological change trail for one specific entity. Includes the full `old_value` and `new_value` snapshots for each event, making it easy to reconstruct the state of an entity at any point in time. Requires `admin` or `root` role.
@@ -185,14 +185,14 @@ Returns the chronological change trail for one specific entity. Includes the ful
 The following example retrieves all audit events for product ID 14 and filters for `update` actions only:
 
 ```bash
-curl -s "http://localhost:5000/api/audit/entity/product/14?action=update&limit=20" \
+curl -s "http://localhost:5000/api/entity/product/14?action=update&limit=20" \
   -H "Cookie: session=<your-session-cookie>"
 ```
 
 To query the full log within a date window (root only):
 
 ```bash
-curl -s "http://localhost:5000/api/audit/all?from=2024-11-01&to=2024-11-30&limit=100" \
+curl -s "http://localhost:5000/api/all?from=2024-11-01&to=2024-11-30&limit=100" \
   -H "Cookie: session=<your-session-cookie>"
 ```
 
