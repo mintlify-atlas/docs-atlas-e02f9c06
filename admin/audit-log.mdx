@@ -1,0 +1,217 @@
+---
+title: "Audit Log: Track Every Entity Change"
+sidebarTitle: "Audit Log"
+description: "StockManager records every create, update, delete, and login action in an audit trail. Query history by user, entity type, action, or date range."
+---
+
+StockManager maintains a persistent audit trail of every significant action performed through the API. Each record captures who performed the action, what entity was affected, the before and after state of that entity, the client IP address, and whether the action succeeded or failed. The audit system is fully automatic — routes opt in by applying the `@audit_action` decorator, and the log is never written directly by business logic.
+
+## The `@audit_action` Decorator
+
+The `audit_action` decorator from `tools/audit_decorator.py` wraps a Flask route handler and logs the action both before and after the function executes. For `update` and `delete` operations it fetches the entity's current state before the handler runs, then compares snapshots to produce a human-readable change description.
+
+```python
+from tools.audit_decorator import audit_action
+
+@audit_action(entity_type, action_name, id_param)
+def my_route_handler(...):
+    ...
+```
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|---|---|---|
+| `entity_type` | string | The kind of entity being acted on (`"user"`, `"product"`, `"sale"`, `"application"`) |
+| `action_name` | string | The action label stored in the log. Defaults to the HTTP method name if omitted. |
+| `id_param` | string | Name of the URL keyword argument that holds the entity's ID (e.g., `"user_id"`). Used to retrieve before/after snapshots. |
+
+### Real Usage Examples
+
+```python
+# Logs a create action; builds description from request JSON
+@audit_action("user", "create")
+def create_user():
+    ...
+
+# Fetches old/new snapshots for update diff
+@audit_action("user", "update", "target_user_id")
+def update_user(target_user_id):
+    ...
+
+# Records pre-delete snapshot before the handler runs
+@audit_action("user", "delete", "target_user_id")
+def delete_user(target_user_id):
+    ...
+
+# Application workflow actions
+@audit_action("application", "approve", "user_id")
+def approve_application(user_id):
+    ...
+```
+
+If an exception is raised inside the handler the decorator still writes an `error`-status audit entry before re-raising, so failures are captured too.
+
+---
+
+## Logged Entities and Actions
+
+<Accordion title="product">
+  | Action | Trigger |
+  |---|---|
+  | `create` | New product added via `POST /api/products` |
+  | `update` | Product fields changed via `PUT /api/products/<id>` |
+  | `delete` | Product removed via `DELETE /api/products/<id>` |
+  | `activate` | Soft-deleted product re-enabled |
+</Accordion>
+
+<Accordion title="sale">
+  | Action | Trigger |
+  |---|---|
+  | `create` | New sale recorded via `POST /api/sales` |
+  | `update` | Sale record modified via `PUT /api/sales/<id>` |
+</Accordion>
+
+<Accordion title="user">
+  | Action | Trigger |
+  |---|---|
+  | `create` | Admin creates an account via `POST /api/users` |
+  | `update` | Account fields changed via `PUT /api/users/<id>` |
+  | `delete` | Account disabled (soft delete) via `DELETE /api/users/<id>` |
+  | `login` | User authenticates via `POST /api/login` |
+  | `register` | User self-registers via `POST /api/register` |
+  | `reset_password` | Password-reset code requested |
+  | `change_password` | Password changed after code verification |
+</Accordion>
+
+<Accordion title="application">
+  | Action | Trigger |
+  |---|---|
+  | `approve` | Admin approves a pending registration |
+  | `reject` | Admin rejects a pending registration |
+</Accordion>
+
+---
+
+## Audit Endpoints
+
+### User History
+
+```bash
+GET /api/audit/user/<user_id>
+```
+
+Returns the audit history for a specific user. A regular authenticated user can only query their own history. A `root` user can query any user ID.
+
+**Query parameters:**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `action` | string | — | Filter by action name (e.g., `login`, `update`) |
+| `from` | string | — | ISO 8601 start date/time (inclusive) |
+| `to` | string | — | ISO 8601 end date/time (inclusive) |
+| `limit` | integer | `50` | Maximum records to return |
+| `offset` | integer | `0` | Pagination offset |
+
+**Response:**
+
+```json
+{
+  "total": 12,
+  "records": [
+    {
+      "id": 88,
+      "user_id": 3,
+      "username": "alice",
+      "action": "update",
+      "entity_type": "product",
+      "entity_id": 14,
+      "description": "Cambios: Precio: '$10.00' → '$12.50'",
+      "timestamp": "2024-11-15T09:41:02",
+      "status": "success"
+    }
+  ]
+}
+```
+
+---
+
+### Full Audit Log
+
+```bash
+GET /api/audit/all
+```
+
+<Note>
+  This endpoint is restricted to **`root` only**. Any other authenticated role receives `403 Forbidden`.
+</Note>
+
+Returns the complete audit log across all users and entities. Accepts the same query parameters as the user-history endpoint (`action`, `from`, `to`, `limit`, `offset`).
+
+---
+
+### Entity Change Trail
+
+```bash
+GET /api/audit/entity/<entity_type>/<entity_id>
+```
+
+Returns the chronological change trail for one specific entity. Includes the full `old_value` and `new_value` snapshots for each event, making it easy to reconstruct the state of an entity at any point in time. Requires `admin` or `root` role.
+
+**Response:**
+
+```json
+{
+  "entity_type": "product",
+  "entity_id": 14,
+  "changes": [
+    {
+      "user_id": 3,
+      "username": "alice",
+      "action": "update",
+      "old_value": { "id": 14, "name": "Notebook", "price": 10.0, "quantity": 50 },
+      "new_value": { "id": 14, "name": "Notebook", "price": 12.5, "quantity": 50 },
+      "timestamp": "2024-11-15T09:41:02",
+      "description": "Cambios: Precio: '$10.00' → '$12.50'"
+    }
+  ]
+}
+```
+
+---
+
+## Example: Querying Product Changes
+
+The following example retrieves all audit events for product ID 14 and filters for `update` actions only:
+
+```bash
+curl -s "http://localhost:5000/api/audit/entity/product/14?action=update&limit=20" \
+  -H "Cookie: session=<your-session-cookie>"
+```
+
+To query the full log within a date window (root only):
+
+```bash
+curl -s "http://localhost:5000/api/audit/all?from=2024-11-01&to=2024-11-30&limit=100" \
+  -H "Cookie: session=<your-session-cookie>"
+```
+
+---
+
+## Audit Record Fields
+
+Every record in the `audit_log` table and every API response includes these fields:
+
+| Field | Description |
+|---|---|
+| `id` | Auto-incremented log entry ID |
+| `user_id` | ID of the user who performed the action (`actor_id`) |
+| `username` | Username of the actor (joined from `users`) |
+| `action` | Action label: `create`, `update`, `delete`, `login`, etc. |
+| `entity_type` | Type of entity affected: `user`, `product`, `sale`, `application` |
+| `entity_id` | Primary key of the affected entity (nullable for session actions) |
+| `description` | Human-readable summary of what changed |
+| `timestamp` | ISO 8601 datetime of the action |
+| `status` | `success` or `error` |
+
+The `old_value` and `new_value` JSON snapshots are stored in the database but only returned by the entity trail endpoint.

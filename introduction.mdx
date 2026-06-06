@@ -1,0 +1,89 @@
+---
+title: "StockManager: Inventory & Sales for Small Business"
+sidebarTitle: "Introduction"
+description: "StockManager is a Flask-based desktop app for inventory control, sales tracking, analytics, and REST API access — all backed by SQLite."
+---
+
+StockManager is an open-source inventory and sales management application designed for small businesses that need a reliable, self-hosted solution without the overhead of a cloud subscription or external database server. It runs entirely on your machine as a native desktop window, giving staff instant access to product catalogs, point-of-sale workflows, and business analytics — even without an internet connection. Whether you're managing a retail shop, a small warehouse, or a café, StockManager handles the daily cycle of stocking products, recording sales, and surfacing the numbers that matter.
+
+## Architecture
+
+StockManager is built on four tightly integrated layers that work together to deliver a desktop application experience from a web stack.
+
+**Flask** serves as the application backbone, handling HTTP routing, session management, and template rendering. All business logic — from validating a new product to processing a bulk sale — lives in Flask blueprints and a structured set of database mixins.
+
+**SQLite** is the persistence layer. The database file is created automatically on first launch; in development mode it lands at `./data/stock.db`, and in the compiled desktop build it is stored in the user's home directory (`~/.stock_manager/data/database.db` on Linux/macOS, `%APPDATA%\StockManager\data\database.db` on Windows). SQLite runs in WAL mode with foreign-key enforcement, giving you ACID transactions without a separate server process.
+
+**Waitress** is the WSGI server used in production mode. It replaces Flask's development server with a multi-threaded, production-grade HTTP server (8 worker threads by default) that listens on `127.0.0.1:5000`. Because Waitress binds only to localhost, the application is not exposed on the network unless you deliberately proxy it.
+
+**PyWebView** wraps the running Flask application in a native OS window (1200×800, minimum 800×600). On Linux it uses GTK + WebKit2; on Windows it uses the system WebView2 runtime. From the user's perspective the app opens and closes like any other desktop application — there is no browser chrome, no address bar, and no need to remember a URL.
+
+## User Roles
+
+StockManager enforces three roles that determine what each user can see and do. Roles are stored in the `users` table and checked on every protected API endpoint.
+
+| Role | Code | Capabilities |
+|------|------|-------------|
+| **Root** | `root` | Full system access. Manages all users, products, sales, and settings. Only one root user can exist at a time — the database enforces this on every startup. |
+| **Admin** | `admin` | Creates, edits, and disables products. Views all sales and analytics reports. Manages vendor accounts. Cannot modify the root account. |
+| **Vendor** | `vendedor` | Browses the product catalog, registers sales, and views their own sales history. Cannot modify inventory or user accounts. |
+
+A default root account (`username: root`, `password: root1234`) is created automatically on first launch if no root user exists. **Change this password immediately after setup.**
+
+## Core Features
+
+<CardGroup cols={2}>
+  <Card title="Inventory Management" icon="boxes-stacking">
+    Track every product with barcode, name, description, quantity, minimum stock threshold, price, and optional expiration date. The system automatically detects low-stock items and sends in-app notifications when a product falls below its minimum quantity. Admins can activate, deactivate, and update products without deleting sales history.
+  </Card>
+  <Card title="Sales & Point of Sale" icon="cash-register">
+    Vendors register individual or bulk sales directly from the product catalog. Each sale records the vendor, timestamp, line-item quantities and prices, and payment method (e.g. cash, card). All sales are stored in a normalized `sells` + `details` schema that supports retroactive editing by admins.
+  </Card>
+  <Card title="Analytics & Metrics" icon="chart-line">
+    The metrics API delivers sales trends with a configurable moving-average window, a 7-day × 24-hour heatmap of sales activity, inventory forecasting with days-remaining estimates, and top-selling product reports. All analytics are computed from the local SQLite database with no external service required.
+  </Card>
+  <Card title="Notifications" icon="bell">
+    Every significant event — a product being added, a sale being registered, a low-stock alert — generates an in-app notification targeted at the relevant user. Notifications carry a type (`info`, `success`, `warning`, `error`), an optional action URL, and a read/unread status so nothing important gets missed.
+  </Card>
+</CardGroup>
+
+## How It Works
+
+Understanding the request flow helps when integrating the REST API or diagnosing issues:
+
+```
+User interaction (PyWebView window)
+        │
+        ▼
+  HTTP request to http://127.0.0.1:5000
+        │
+        ▼
+  Waitress WSGI server (8 threads)
+        │
+        ▼
+  Flask application
+  ├── Blueprint routing (/api/*, /products, /sales, …)
+  ├── Session & role enforcement
+  └── BDConector (SQLite via thread-local connections)
+        │
+        ▼
+  SQLite database (WAL mode, FK enforcement)
+```
+
+PyWebView embeds a platform-native browser engine and points it at `http://127.0.0.1:5000`. Every click, form submission, and page navigation is a standard HTTP request handled by Waitress, which dispatches it to the Flask application. Flask resolves the route, applies authentication decorators, calls the appropriate database mixin, and returns a rendered HTML template or a JSON response. The result travels back through Waitress and appears in the PyWebView window.
+
+## REST API
+
+Every feature in StockManager is exposed through a REST API mounted at `/api/`. The API uses Flask sessions for authentication — call `POST /api/login` with JSON credentials to establish a session, then include the session cookie in subsequent requests. This means you can drive the application programmatically from any HTTP client, build integrations, or consume data from external scripts, all against the same local server that powers the desktop UI.
+
+Key API namespaces:
+
+| Prefix | Description |
+|--------|-------------|
+| `POST /api/login` | Authenticate and start a session |
+| `GET/POST /api/products` | List or create inventory items |
+| `GET/PUT/DELETE /api/products/<id>` | Read, update, or disable a product |
+| `POST /api/sales/bulk` | Register a multi-item sale |
+| `GET /api/sales` | List sales with date/vendor/product filters |
+| `GET /api/metrics/*` | Sales trends, heatmaps, and forecasts |
+| `GET /api/notifications` | Read in-app notifications |

@@ -1,0 +1,309 @@
+---
+title: "Sales API — Register and Query Transactions"
+sidebarTitle: "Sales"
+description: "REST endpoints for recording single-item and multi-item sales, querying transaction history with filters, and editing existing sales as an admin."
+---
+
+The Sales API handles every part of the transaction lifecycle in StockManager. Authenticated users can record single-product sales or multi-item bulk transactions in one atomic call. The history endpoints expose paginated, filterable records with full product breakdowns. Admin and root users additionally have access to endpoints for retrieving sales in an edit-friendly format and applying corrections to previously recorded transactions.
+
+---
+
+## POST /api/sales
+
+Records a sale for a **single product** identified by its barcode. Stock is decremented immediately on success.
+
+### Request Body
+
+<ParamField body="barcode" type="string" required>
+  The barcode of the product to sell. Must match an active product (`status = 1`).
+</ParamField>
+
+<ParamField body="quantity" type="integer" required>
+  Number of units to sell. Must not exceed the product's current `stock`.
+</ParamField>
+
+<ParamField body="payment_method" type="string" default="Efectivo">
+  Payment method label (e.g. `"Efectivo"`, `"Tarjeta"`). Defaults to `"Efectivo"` if omitted.
+</ParamField>
+
+### Response
+
+<ResponseField name="message" type="string">Human-readable confirmation, e.g. `"Venta registrada: Leche Entera 1L x2"`.</ResponseField>
+<ResponseField name="product" type="string">Name of the product sold.</ResponseField>
+<ResponseField name="quantity" type="integer">Number of units sold.</ResponseField>
+<ResponseField name="total" type="number">Total transaction amount (`price × quantity`).</ResponseField>
+
+```json 201 Created
+{
+  "message": "Venta registrada: Leche Entera 1L x2",
+  "product": "Leche Entera 1L",
+  "quantity": 2,
+  "total": 45.0
+}
+```
+
+| Status | Meaning |
+|--------|---------|
+| `201` | Sale recorded successfully. |
+| `400` | Missing required fields, invalid quantity, or insufficient stock. |
+| `401` | No active session. |
+| `404` | No active product found for the given barcode. |
+
+---
+
+## POST /api/sales/bulk
+
+Records a **multi-product sale** in a single atomic database transaction. All stock validations are performed before any inventory is decremented — if any item fails, the entire sale is rejected and no changes are persisted.
+
+<Warning>
+  Stock validation is fully atomic. If even one item in the `items` array has insufficient stock or is disabled, the entire request is rejected with `400` and no products are decremented. Ensure all quantities are available before submitting.
+</Warning>
+
+### Request Body
+
+<ParamField body="items" type="array" required>
+  Array of one or more item objects to include in the sale. Must not be empty.
+
+  <Expandable title="Item object fields">
+    <ParamField body="item_id" type="integer" required>
+      The unique numeric ID of the product (see `id` in product responses).
+    </ParamField>
+    <ParamField body="quantity" type="integer" required>
+      Number of units to sell. Must not exceed the product's current `stock`.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="payment_method" type="string" default="Efectivo">
+  Payment method label for the entire transaction. Defaults to `"Efectivo"` if omitted.
+</ParamField>
+
+### Response
+
+<ResponseField name="ok" type="boolean">`true` when the sale was created successfully.</ResponseField>
+<ResponseField name="sale_id" type="integer">ID of the newly created sale record.</ResponseField>
+<ResponseField name="items" type="array">
+  Array of line-item result objects, one per submitted item.
+
+  <Expandable title="Line-item result fields">
+    <ResponseField name="item_id" type="integer">Product ID.</ResponseField>
+    <ResponseField name="name" type="string">Product name.</ResponseField>
+    <ResponseField name="quantity" type="integer">Units sold.</ResponseField>
+    <ResponseField name="unit_price" type="number">Price per unit at the time of sale.</ResponseField>
+    <ResponseField name="subtotal" type="number">Line total (`unit_price × quantity`), rounded to 2 decimal places.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="total" type="number">Grand total across all line items, rounded to 2 decimal places.</ResponseField>
+
+```bash Example — bulk sale with two products
+curl -X POST "http://localhost:5000/api/sales/bulk" \
+  -H "Content-Type: application/json" \
+  -H "Cookie: session=<your-session-cookie>" \
+  -d '{
+    "items": [
+      { "item_id": 7, "quantity": 2 },
+      { "item_id": 12, "quantity": 1 }
+    ],
+    "payment_method": "Tarjeta"
+  }'
+```
+
+```json 201 Created
+{
+  "ok": true,
+  "sale_id": 304,
+  "items": [
+    {
+      "item_id": 7,
+      "name": "Leche Entera 1L",
+      "quantity": 2,
+      "unit_price": 22.5,
+      "subtotal": 45.0
+    },
+    {
+      "item_id": 12,
+      "name": "Pan Integral 500g",
+      "quantity": 1,
+      "unit_price": 18.0,
+      "subtotal": 18.0
+    }
+  ],
+  "total": 63.0
+}
+```
+
+| Status | Meaning |
+|--------|---------|
+| `201` | All items sold and sale recorded. |
+| `400` | Invalid format, empty `items` array, insufficient stock, or disabled product. |
+| `401` | Session is missing or user ID could not be resolved. |
+
+---
+
+## GET /api/sales
+
+Returns a paginated, filterable list of sales transactions sorted by date descending. Each record includes a breakdown of the products involved.
+
+<ParamField query="from" type="string">
+  Start date filter (inclusive) in `YYYY-MM-DD` format. Filters on the sale's local date.
+</ParamField>
+
+<ParamField query="to" type="string">
+  End date filter (inclusive) in `YYYY-MM-DD` format.
+</ParamField>
+
+<ParamField query="product" type="string">
+  Partial match filter on the product name. Returns sales that contain at least one product whose name matches the search string.
+</ParamField>
+
+<ParamField query="vendedor" type="string">
+  Partial match filter on the vendor's `username` or `email`. Case-insensitive.
+</ParamField>
+
+<ParamField query="page" type="integer" default="1">
+  1-based page number.
+</ParamField>
+
+<ParamField query="limit" type="integer" default="10">
+  Sales per page. Clamped between 1 and 100.
+</ParamField>
+
+### Response
+
+<ResponseField name="data" type="array">
+  Array of sale objects for the current page.
+
+  <Expandable title="Sale object fields">
+    <ResponseField name="id" type="integer">Unique sale ID.</ResponseField>
+    <ResponseField name="date" type="string">Date and time the sale was recorded.</ResponseField>
+    <ResponseField name="products" type="array">
+      Array of product line items in this sale.
+      <Expandable title="Product line item fields">
+        <ResponseField name="name" type="string">Product name.</ResponseField>
+        <ResponseField name="quantity" type="integer">Units sold.</ResponseField>
+        <ResponseField name="price" type="number">Unit price at the time of sale.</ResponseField>
+      </Expandable>
+    </ResponseField>
+    <ResponseField name="total_quantity" type="integer">Sum of all unit quantities across all products in this sale.</ResponseField>
+    <ResponseField name="total" type="number">Grand total, rounded to 2 decimal places.</ResponseField>
+    <ResponseField name="vendedor" type="string">Username of the vendor who recorded the sale.</ResponseField>
+    <ResponseField name="vendor_id" type="integer">Numeric ID of the vendor user.</ResponseField>
+    <ResponseField name="payment_method" type="string">Payment method used for the sale.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="total" type="integer">Total number of sales matching the applied filters.</ResponseField>
+<ResponseField name="page" type="integer">Current page number.</ResponseField>
+<ResponseField name="pages" type="integer">Total number of pages.</ResponseField>
+<ResponseField name="limit" type="integer">Records-per-page value used for this response.</ResponseField>
+
+---
+
+## GET /api/sales/:id
+
+Returns the complete details of a single sale transaction by its ID.
+
+### Path Parameter
+
+<ParamField path="id" type="integer" required>
+  The unique integer ID of the sale.
+</ParamField>
+
+### Response
+
+<ResponseField name="id" type="integer">Unique sale ID.</ResponseField>
+<ResponseField name="date" type="string">Date and time the sale was recorded.</ResponseField>
+<ResponseField name="products" type="array">
+  Array of product line items.
+  <Expandable title="Product line item fields">
+    <ResponseField name="name" type="string">Product name.</ResponseField>
+    <ResponseField name="quantity" type="integer">Units sold.</ResponseField>
+    <ResponseField name="price" type="number">Unit price at the time of sale.</ResponseField>
+  </Expandable>
+</ResponseField>
+<ResponseField name="total" type="number">Grand total across all line items.</ResponseField>
+<ResponseField name="vendedor" type="string">Username of the vendor who recorded the sale.</ResponseField>
+<ResponseField name="vendor_id" type="integer">Numeric ID of the vendor user.</ResponseField>
+<ResponseField name="payment_method" type="string">Payment method used.</ResponseField>
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Sale found and returned. |
+| `401` | No active session. |
+| `404` | No sale found with the given ID. |
+
+---
+
+## GET /api/sales/:id/edit
+
+Returns sale data structured for editing. This endpoint is restricted to `admin` and `root` roles and is intended to power administrative correction workflows.
+
+### Path Parameter
+
+<ParamField path="id" type="integer" required>
+  The unique integer ID of the sale to retrieve for editing.
+</ParamField>
+
+### Response
+
+Returns the sale record as a JSON object suitable for pre-populating an edit form. Structure matches the response from `GET /api/sales/:id` with any additional edit-mode fields provided by the database layer.
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Sale data returned in edit format. |
+| `401` | No active session. |
+| `403` | Authenticated user lacks `admin` or `root` role. |
+| `404` | No sale found with the given ID. |
+| `500` | Internal error while retrieving sale. |
+
+---
+
+## PUT /api/sales/:id
+
+Updates the items, vendor, and payment method of an existing sale. Requires the `admin` or `root` role. Stock levels are recalculated automatically after the update.
+
+### Path Parameter
+
+<ParamField path="id" type="integer" required>
+  The unique integer ID of the sale to update.
+</ParamField>
+
+### Request Body
+
+<ParamField body="items" type="array" required>
+  Replacement list of line items for the sale. Must be a non-empty array.
+
+  <Expandable title="Item object fields">
+    <ParamField body="item_id" type="integer" required>Product ID.</ParamField>
+    <ParamField body="quantity" type="integer" required>Updated quantity.</ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="vendor_id" type="integer" required>
+  ID of the vendor to associate with the sale.
+</ParamField>
+
+<ParamField body="payment_method" type="string" required>
+  Updated payment method label.
+</ParamField>
+
+### Response
+
+```json 200 OK
+{
+  "message": "Venta actualizada exitosamente"
+}
+```
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Sale updated successfully. |
+| `400` | Invalid `items` format, missing `vendor_id` or `payment_method`, or a stock validation error. |
+| `401` | No active session. |
+| `403` | Authenticated user lacks `admin` or `root` role. |
+| `500` | Internal error during update. |
+
+<Tip>
+  Low-stock checks run automatically after every sale update. If any product's remaining stock falls at or below its `min_quantity`, the acting admin receives an in-app notification.
+</Tip>

@@ -1,0 +1,399 @@
+---
+title: "Products API — Inventory CRUD Endpoints"
+sidebarTitle: "Products"
+description: "REST endpoints for managing StockManager's product inventory: list, search, create, update, disable, and reactivate items with full parameter documentation."
+---
+
+The Products API gives you full control over StockManager's item catalog. You can retrieve paginated and filtered product lists, look up individual items, create new entries, make partial updates, soft-delete records by disabling them, and bring them back with the activate endpoint. All routes require an active session; write operations additionally require the `admin` or `root` role.
+
+---
+
+## GET /api/products_all
+
+Returns a paginated list of **all** products in the inventory, including disabled ones (`status = 0`). Designed for inventory management screens where administrators need visibility over the full catalog.
+
+<ParamField query="search" type="string">
+  Full-text search applied simultaneously to `name`, `barcode`, and `description` fields.
+</ParamField>
+
+<ParamField query="view_mode" type="string" default="all">
+  Stock-level filter. Accepted values: `all` · `in_stock` (quantity > min\_stock) · `low_stock` (quantity > 0 and quantity ≤ min\_stock) · `out_of_stock` (quantity = 0).
+</ParamField>
+
+<ParamField query="sort" type="string" default="name">
+  Column to order results by. Accepted values: `name` · `stock` · `price`. Any other value silently falls back to `name`.
+</ParamField>
+
+<ParamField query="order" type="string" default="asc">
+  Sort direction. Accepted values: `asc` · `desc`.
+</ParamField>
+
+<ParamField query="page" type="integer" default="1">
+  1-based page number. Values below 1 are clamped to 1.
+</ParamField>
+
+<ParamField query="limit" type="integer" default="50">
+  Number of records per page. Clamped between 1 and 250.
+</ParamField>
+
+### Response
+
+<ResponseField name="data" type="array">
+  Array of product objects for the current page.
+
+  <Expandable title="Product object fields">
+    <ResponseField name="id" type="integer">Unique product ID.</ResponseField>
+    <ResponseField name="barcode" type="string">Barcode of the product (`barrs_code` in the database).</ResponseField>
+    <ResponseField name="name" type="string">Product name, up to 25 characters.</ResponseField>
+    <ResponseField name="description" type="string">Optional description, up to 200 characters.</ResponseField>
+    <ResponseField name="stock" type="integer">Current quantity in inventory.</ResponseField>
+    <ResponseField name="min_stock" type="integer">Minimum stock threshold; triggers low-stock notifications when reached.</ResponseField>
+    <ResponseField name="price" type="number">Unit sale price.</ResponseField>
+    <ResponseField name="status" type="integer">`1` = active, `0` = disabled.</ResponseField>
+    <ResponseField name="expiration_date" type="string">Expiration date in `YYYY-MM-DD` format, or `null` if not set.</ResponseField>
+    <ResponseField name="created_at" type="string">ISO timestamp of when the product was created.</ResponseField>
+    <ResponseField name="updated_at" type="string">ISO timestamp of the most recent update.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="total" type="integer">Total number of records matching the applied filters.</ResponseField>
+<ResponseField name="page" type="integer">Current page number.</ResponseField>
+<ResponseField name="pages" type="integer">Total number of pages given `total` and `limit`.</ResponseField>
+<ResponseField name="limit" type="integer">Records-per-page value used for this response.</ResponseField>
+
+---
+
+## GET /api/products
+
+Returns a paginated list of **active products only** (`status = 1`). This is the primary endpoint used by point-of-sale and search screens where only sellable items should appear.
+
+<Note>
+  The `view_mode` filter for this endpoint does not include `low_stock`. Use `GET /api/products_all` if you need low-stock visibility.
+</Note>
+
+<ParamField query="search" type="string">
+  Search by product `name` or `barcode`.
+</ParamField>
+
+<ParamField query="view_mode" type="string" default="all">
+  Stock-level filter. Accepted values: `all` · `in_stock` (quantity > 0) · `out_of_stock` (quantity = 0).
+</ParamField>
+
+<ParamField query="sort" type="string" default="name">
+  Column to order results by. Accepted values: `name` · `stock` · `price`.
+</ParamField>
+
+<ParamField query="order" type="string" default="asc">
+  Sort direction. Accepted values: `asc` · `desc`.
+</ParamField>
+
+<ParamField query="page" type="integer" default="1">
+  1-based page number.
+</ParamField>
+
+<ParamField query="limit" type="integer" default="24">
+  Records per page. Clamped between 1 and 250. Default is 24, optimised for grid card layouts.
+</ParamField>
+
+### Response
+
+Same structure as `GET /api/products_all`. The `status` field will always be `1` in results from this endpoint.
+
+<br />
+
+```bash Example — list in-stock products, second page
+curl -X GET "http://localhost:5000/api/products?view_mode=in_stock&page=2&limit=24" \
+  -H "Cookie: session=<your-session-cookie>"
+```
+
+```json Response
+{
+  "data": [
+    {
+      "id": 7,
+      "barcode": "7501234567890",
+      "name": "Leche Entera 1L",
+      "description": "Leche entera pasteurizada",
+      "stock": 48,
+      "min_stock": 10,
+      "price": 22.5,
+      "status": 1,
+      "expiration_date": "2025-09-01",
+      "created_at": "2024-11-03T10:22:00",
+      "updated_at": "2025-01-15T08:30:00"
+    }
+  ],
+  "total": 1,
+  "page": 2,
+  "pages": 2,
+  "limit": 24
+}
+```
+
+---
+
+## GET /api/products/:id
+
+Returns the full details of a single active product identified by its numeric ID.
+
+<Note>
+  This endpoint only returns products with `status = 1`. Disabled products return `404` rather than `403` to avoid leaking catalog information.
+</Note>
+
+### Path Parameter
+
+<ParamField path="id" type="integer" required>
+  The unique integer ID of the product.
+</ParamField>
+
+### Response
+
+<ResponseField name="id" type="integer">Unique product ID.</ResponseField>
+<ResponseField name="barcode" type="string">Product barcode.</ResponseField>
+<ResponseField name="name" type="string">Product name.</ResponseField>
+<ResponseField name="description" type="string">Product description.</ResponseField>
+<ResponseField name="stock" type="integer">Current quantity available.</ResponseField>
+<ResponseField name="min_stock" type="integer">Minimum stock alert threshold.</ResponseField>
+<ResponseField name="price" type="number">Unit sale price.</ResponseField>
+<ResponseField name="expiration_date" type="string">Expiration date (`YYYY-MM-DD`) or `null`.</ResponseField>
+<ResponseField name="created_at" type="string">Creation timestamp.</ResponseField>
+<ResponseField name="updated_at" type="string">Last update timestamp.</ResponseField>
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Product found and returned. |
+| `401` | No active session. |
+| `404` | Product does not exist or is disabled. |
+
+---
+
+## POST /api/products
+
+Creates a new product in the inventory. Requires the `admin` or `root` role.
+
+<Steps>
+  <Step title="Authenticate as admin or root">
+    Ensure your session belongs to a user with role `admin` or `root`. A `403` is returned otherwise.
+  </Step>
+  <Step title="Submit product data">
+    Send a JSON body with the required fields. Optional fields can be omitted entirely.
+  </Step>
+  <Step title="Receive confirmation">
+    A `201` response confirms creation. An in-app notification is also dispatched to the creating user.
+  </Step>
+</Steps>
+
+### Request Body
+
+<ParamField body="barcode" type="string" required>
+  Product barcode. Maximum 20 characters.
+</ParamField>
+
+<ParamField body="name" type="string" required>
+  Product name. Maximum 25 characters.
+</ParamField>
+
+<ParamField body="quantity" type="integer" required>
+  Initial stock quantity. Maximum 10,000.
+</ParamField>
+
+<ParamField body="min_quantity" type="integer" required>
+  Minimum stock threshold for low-stock alerts. Maximum 1,000.
+</ParamField>
+
+<ParamField body="price" type="number" required>
+  Unit sale price. Maximum 1,000,000.
+</ParamField>
+
+<ParamField body="description" type="string">
+  Optional product description. Maximum 200 characters.
+</ParamField>
+
+<ParamField body="expiration_date" type="string">
+  Optional expiration date in `YYYY-MM-DD` format.
+</ParamField>
+
+### Response
+
+```json 201 Created
+{
+  "message": "Producto creado exitosamente"
+}
+```
+
+| Status | Meaning |
+|--------|---------|
+| `201` | Product created successfully. |
+| `400` | Missing required fields or validation error. |
+| `401` | No active session. |
+| `403` | Authenticated user lacks `admin` or `root` role. |
+| `500` | Database or internal error. |
+
+<br />
+
+```bash Example — create a product
+curl -X POST "http://localhost:5000/api/products" \
+  -H "Content-Type: application/json" \
+  -H "Cookie: session=<your-session-cookie>" \
+  -d '{
+    "barcode": "7501234567890",
+    "name": "Leche Entera 1L",
+    "quantity": 100,
+    "min_quantity": 10,
+    "price": 22.50,
+    "description": "Leche entera pasteurizada",
+    "expiration_date": "2025-09-01"
+  }'
+```
+
+```json Response
+{
+  "message": "Producto creado exitosamente"
+}
+```
+
+---
+
+## PUT /api/products/:id
+
+Partially updates an existing product. Only the fields present in the request body are modified; omitted fields retain their current values. Requires the `admin` or `root` role.
+
+### Path Parameter
+
+<ParamField path="id" type="integer" required>
+  The unique integer ID of the product to update.
+</ParamField>
+
+### Request Body
+
+All fields are optional. At least one field must differ from the current stored value; sending identical values returns `400`.
+
+<ParamField body="name" type="string">
+  New product name. Maximum 25 characters.
+</ParamField>
+
+<ParamField body="description" type="string">
+  New description. Maximum 200 characters.
+</ParamField>
+
+<ParamField body="quantity" type="integer">
+  Updated stock quantity. Maximum 10,000.
+</ParamField>
+
+<ParamField body="min_quantity" type="integer">
+  Updated minimum stock threshold. Maximum 1,000.
+</ParamField>
+
+<ParamField body="price" type="number">
+  Updated unit sale price. Maximum 1,000,000.
+</ParamField>
+
+<ParamField body="expiration_date" type="string">
+  Updated expiration date in `YYYY-MM-DD` format.
+</ParamField>
+
+<ParamField body="status" type="integer">
+  Explicit status override. `1` = active, `0` = disabled. Prefer the dedicated `/activate` and `DELETE` endpoints for lifecycle changes.
+</ParamField>
+
+### Response
+
+```json 200 OK
+{
+  "message": "Producto actualizado"
+}
+```
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Product updated successfully. |
+| `400` | No fields to update (all submitted values match current state). |
+| `401` | No active session. |
+| `403` | Authenticated user lacks `admin` or `root` role. |
+
+<Tip>
+  Low-stock checks run automatically after every update. If the updated `quantity` falls at or below `min_quantity`, the authenticated user receives an in-app notification.
+</Tip>
+
+---
+
+## DELETE /api/products/:id
+
+Performs a **soft delete** by setting `status = 0` on the product. The record is preserved in the database and can be reactivated at any time. Requires the `admin` or `root` role.
+
+### Path Parameter
+
+<ParamField path="id" type="integer" required>
+  The unique integer ID of the product to disable.
+</ParamField>
+
+### Response
+
+```json 200 OK
+{
+  "message": "Producto deshabilitado"
+}
+```
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Product disabled successfully. |
+| `401` | No active session. |
+| `403` | Authenticated user lacks `admin` or `root` role. |
+
+<Warning>
+  Disabled products are hidden from `GET /api/products` and `GET /api/items` but remain fully visible in `GET /api/products_all`. Stock levels are preserved so re-enabling the product restores its full inventory state.
+</Warning>
+
+---
+
+## POST /api/products/:id/activate
+
+Re-enables a previously disabled product by setting `status = 1`. Requires the `admin` or `root` role.
+
+### Path Parameter
+
+<ParamField path="id" type="integer" required>
+  The unique integer ID of the product to reactivate.
+</ParamField>
+
+### Response
+
+```json 200 OK
+{
+  "message": "Producto activado"
+}
+```
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Product activated successfully. |
+| `401` | No active session. |
+| `403` | Authenticated user lacks `admin` or `root` role. |
+| `500` | Internal error during activation. |
+
+---
+
+## GET /api/items
+
+Lightweight autocomplete endpoint that searches active products by name or barcode and returns up to 10 matches. Intended for typeahead inputs on sale and lookup screens.
+
+<ParamField query="q" type="string" required>
+  Search term matched against both `name` and `barcode`. Returns an empty array if the parameter is missing or blank.
+</ParamField>
+
+### Response
+
+Returns a JSON array of up to 10 product objects. An empty array `[]` is returned when no products match or the `q` parameter is empty — this is not an error condition.
+
+<ResponseField name="id" type="integer">Unique product ID.</ResponseField>
+<ResponseField name="barcode" type="string">Product barcode.</ResponseField>
+<ResponseField name="name" type="string">Product name.</ResponseField>
+<ResponseField name="description" type="string">Product description.</ResponseField>
+<ResponseField name="stock" type="integer">Current quantity available.</ResponseField>
+<ResponseField name="price" type="number">Unit sale price.</ResponseField>
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Search completed (may return empty array). |
+| `401` | No active session. |

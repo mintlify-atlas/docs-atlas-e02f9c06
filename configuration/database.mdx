@@ -1,0 +1,204 @@
+---
+title: "SQLite Database Architecture and Management"
+sidebarTitle: "Database"
+description: "StockManager uses SQLite with WAL mode, thread-local connections, and automatic schema initialization. Learn the schema, connection settings, and maintenance tasks."
+---
+
+StockManager stores all application data in a single SQLite file. The database is created and initialized automatically on first run by `bd/bdInstance.py` — no manual setup or migration command is required. The connection layer (`bd/bdConector.py`) applies a fixed set of PRAGMAs on every new connection and uses a thread-local pool to keep SQLite thread-safe inside Waitress's multi-threaded environment.
+
+## Database File Location
+
+The file path is resolved differently depending on how the application is running:
+
+| Mode | Path |
+|---|---|
+| **Development** | Value of `DB_PATH` env var, or `./data/stock.db` relative to the project root |
+| **Executable (Windows)** | `%APPDATA%\StockManager\data\database.db` |
+| **Executable (Linux / macOS)** | `~/.stock_manager/data/database.db` |
+
+In both modes, `bd/bdInstance.py` creates the parent directory with `os.makedirs(exist_ok=True)` before opening the file, so the path never needs to exist beforehand.
+
+## SQLite PRAGMA Settings
+
+Every new connection applies these PRAGMAs immediately after `sqlite3.connect()`:
+
+| PRAGMA | Value | Effect |
+|---|---|---|
+| `foreign_keys` | `ON` | Enforces foreign-key constraints, which are disabled by default in SQLite. |
+| `journal_mode` | `WAL` | Enables Write-Ahead Logging for improved concurrency. |
+| `synchronous` | `NORMAL` | Balances durability and write performance; safe with WAL. |
+| `cache_size` | `-8000` | Allocates approximately 8 MB of page cache per connection. |
+| `temp_store` | `MEMORY` | Keeps temporary tables and indices in memory rather than on disk. |
+
+<Note>
+  WAL mode allows multiple readers to access the database simultaneously with a single
+  writer, without blocking each other. This is important in Waitress's multi-threaded
+  context where several HTTP requests may query the database at the same time.
+</Note>
+
+## Thread-Safety and Connection Pool
+
+StockManager does **not** share a single `sqlite3.Connection` object across threads. Instead, `bdConector.py` maintains a thread-local store (`_thread_local = threading.local()`) so that each Waitress worker thread gets its own independent connection:
+
+- **`db._get_conn()`** — returns the connection for the current thread, creating and configuring it on first access.
+- **`db.close_conn()`** — closes and discards the current thread's connection. Should be called in a Flask `teardown_appcontext` hook if the application is run outside the PyWebView wrapper.
+
+### Write Operations — `db.transaction()`
+
+```python
+with db.transaction() as cur:
+    cur.execute("INSERT INTO sells (vendor_id, date, payment_method) VALUES (?, ?, ?)", (...))
+    cur.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (...))
+```
+
+Use `db.transaction()` whenever a business operation requires multiple `INSERT`/`UPDATE` statements to succeed atomically. It commits on success and rolls back on any exception.
+
+### Read Operations — `db._cursor()`
+
+```python
+with db._cursor() as cur:
+    cur.execute("SELECT id, name, quantity FROM items WHERE status = 1")
+    rows = cur.fetchall()
+```
+
+`db._cursor()` is the lower-level context manager used by most mixin methods. It also calls `commit()` after the block, making it suitable for single-statement writes as well.
+
+## Schema Overview
+
+All tables are created in a single `init_db()` transaction on startup. Incremental column migrations are applied afterward via `ALTER TABLE … ADD COLUMN` (idempotent — duplicate-column errors are silently skipped).
+
+### `items`
+
+Stores the product inventory.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `INTEGER PRIMARY KEY` | |
+| `barrs_code` | `TEXT UNIQUE` | Barcode string; nullable |
+| `name` | `TEXT NOT NULL` | |
+| `description` | `TEXT` | |
+| `quantity` | `INTEGER` | Current stock level; default `0` |
+| `min_quantity` | `INTEGER` | Low-stock threshold; default `5` |
+| `price` | `REAL NOT NULL` | |
+| `expiration_date` | `TEXT` | ISO date string; nullable |
+| `status` | `INTEGER` | `1` = active, `0` = inactive; default `1` |
+| `notified_low_stock` | `INTEGER` | Flag to avoid duplicate low-stock alerts; default `0` |
+| `created_at` | `TEXT` | |
+| `updated_at` | `TEXT` | |
+
+### `sells`
+
+Sales header — one row per transaction.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `INTEGER PRIMARY KEY AUTOINCREMENT` | |
+| `vendor_id` | `INTEGER` | References `users(id)` |
+| `date` | `TEXT NOT NULL` | |
+| `payment_method` | `TEXT` | Default `'Efectivo'` |
+
+### `details`
+
+Line items belonging to a sale.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `INTEGER PRIMARY KEY AUTOINCREMENT` | |
+| `sell_id` | `INTEGER NOT NULL` | References `sells(id)` |
+| `item_id` | `INTEGER NOT NULL` | References `items(id)` |
+| `quantity` | `INTEGER NOT NULL` | |
+| `price` | `REAL NOT NULL` | Unit price at time of sale |
+| `vendor_id` | `INTEGER` | Denormalized for query convenience |
+| `payment_method` | `TEXT` | Default `'Efectivo'` |
+
+### `users`
+
+Application user accounts.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `INTEGER PRIMARY KEY AUTOINCREMENT UNIQUE` | |
+| `username` | `TEXT NOT NULL` | |
+| `email` | `TEXT NOT NULL UNIQUE` | |
+| `password` | `TEXT NOT NULL` | Werkzeug `pbkdf2` hash |
+| `role` | `TEXT NOT NULL` | Controlled by `data/roles.py` |
+| `status` | `INTEGER` | `1` = active; default `1` |
+| `application` | `TEXT` | Approval state; default `'pending'` |
+| `created_at` | `TIMESTAMP` | |
+| `history` | `TEXT` | |
+
+### `notifications`
+
+Per-user in-app notification feed.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `INTEGER PRIMARY KEY AUTOINCREMENT` | |
+| `user_id` | `INTEGER NOT NULL` | References `users(id) ON DELETE CASCADE` |
+| `title` | `TEXT NOT NULL` | |
+| `message` | `TEXT` | |
+| `type` | `TEXT` | `'info'`, `'warning'`, `'success'`, or `'error'`; default `'info'` |
+| `action_url` | `TEXT` | Optional deep-link |
+| `is_read` | `INTEGER` | `0` = unread; default `0` |
+| `created_at` | `TEXT` | |
+
+### `audit_log`
+
+Append-only record of user actions on entities.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `INTEGER PRIMARY KEY AUTOINCREMENT` | |
+| `user_id` | `INTEGER NOT NULL` | References `users(id)` |
+| `action` | `TEXT NOT NULL` | e.g. `'create'`, `'update'`, `'delete'` |
+| `entity_type` | `TEXT NOT NULL` | e.g. `'item'`, `'user'` |
+| `entity_id` | `INTEGER` | |
+| `old_value` | `TEXT` | JSON snapshot before change |
+| `new_value` | `TEXT` | JSON snapshot after change |
+| `description` | `TEXT` | |
+| `ip_address` | `TEXT` | |
+| `timestamp` | `TEXT` | Default `CURRENT_TIMESTAMP` |
+| `status` | `TEXT` | Default `'success'` |
+
+### `password_resets`
+
+Short-lived codes sent to users during the password-reset flow.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `INTEGER PRIMARY KEY AUTOINCREMENT` | |
+| `email` | `TEXT NOT NULL` | |
+| `code` | `TEXT NOT NULL` | Random reset code |
+| `created_at` | `TIMESTAMP` | Default `CURRENT_TIMESTAMP` |
+
+## Database Indexes
+
+Several indexes are created at initialization to speed up common query patterns:
+
+| Index | Table | Columns |
+|---|---|---|
+| `idx_sells_date_vendor_id` | `sells` | `(date, vendor_id)` |
+| `idx_sells_date` | `sells` | `(date)` |
+| `idx_sells_vendor_id` | `sells` | `(vendor_id)` |
+| `idx_details_sell_id` | `details` | `(sell_id)` |
+| `idx_details_item_id` | `details` | `(item_id)` |
+| `idx_items_name` | `items` | `(name)` |
+| `idx_notifications_user_read` | `notifications` | `(user_id, is_read)` |
+| `idx_notifications_created` | `notifications` | `(created_at DESC)` |
+
+## Scheduled Maintenance
+
+The background scheduler calls `db._check_unique_root_user()` every **30 minutes**. This method counts users with the `ROOT` role; if more than one is found it logs a critical error and raises a `DatabaseError` to alert operators of a data-integrity problem.
+
+On first run, `init_db()` also calls `__create_default_root_user()` to seed an initial administrator account (`username: root`, `email: root@root.com`, `password: root1234`) if no ROOT user exists yet. Change this password immediately after the first login.
+
+## DB Viewer Utility
+
+The repository ships with `bdViewer.py`, a standalone dark-mode SQLite browser built with `customtkinter`. It opens any `.db` file and lets you browse tables, run arbitrary SQL, inspect schemas, edit rows, and export data to CSV. Run it directly from the project root:
+
+```bash
+pip install customtkinter
+python bdViewer.py
+```
+
+The viewer connects read/write to whichever file you open via its file dialog and does not depend on the rest of the StockManager application being running.

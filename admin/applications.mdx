@@ -1,0 +1,154 @@
+---
+title: "User Registration Approval Workflow"
+sidebarTitle: "Applications"
+description: "New users register with pending status and require admin approval. Use the applications API to list, approve, or reject registration requests."
+---
+
+StockManager does not grant access immediately on self-registration. When a new user creates an account through the `/register` page or the `POST /api/register` endpoint, the account is created in a `pending` state with `status=0`. No login is possible until an administrator or root user reviews the request and explicitly approves it. This approval workflow ensures that only verified individuals gain access to inventory and sales data.
+
+## Registration Flow
+
+<Steps>
+  <Step title="User Self-Registers">
+    The user submits their username, email, and password via the `/register` page or directly through the API.
+
+    ```bash
+    curl -s -X POST http://localhost:5000/api/register \
+      -H "Content-Type: application/json" \
+      -d '{
+        "username": "newvendor",
+        "email": "newvendor@example.com",
+        "password": "s3cur3pass"
+      }'
+    ```
+
+    **Response:**
+
+    ```json
+    {
+      "success": true,
+      "message": "Cuenta creada. Espera la aprobación del administrador."
+    }
+    ```
+
+    Status codes: `201` on success, `400` for missing fields or a password shorter than 6 characters, `409` if the username or email already exists.
+  </Step>
+
+  <Step title="Account Created with Pending Status">
+    The database record is inserted with `status=0` (disabled) and `application="pending"`. The new user's role is automatically set to `vendedor`. They cannot log in until their application is reviewed.
+  </Step>
+
+  <Step title="Admin Reviews Pending Applications">
+    Administrators open the Applications panel or call `GET /api/applications` to see all accounts still awaiting a decision.
+  </Step>
+
+  <Step title="Admin Approves or Rejects">
+    Approving sets `application="accepted"` and `status=1`, enabling the account. Rejecting sets `application="rejected"` while leaving `status=0`. Both actions are recorded in the audit log.
+  </Step>
+</Steps>
+
+<Tip>
+  Check the Applications panel regularly — pending registrations are not pushed as notifications by default. New vendor accounts cannot do any work until they are approved, so a backlog of pending requests means delayed productivity for your team.
+</Tip>
+
+---
+
+## Application Status Values
+
+The `application` column on the `users` table is a string controlled by the `Var` class in `data/variables.py`:
+
+| Value | Constant | Meaning |
+|---|---|---|
+| `"pending"` | `Var.USER_APPLICATION_PENDING` | Awaiting admin review |
+| `"accepted"` | `Var.USER_APPLICATION_ACCEPTED` | Approved; account is active |
+| `"rejected"` | `Var.USER_APPLICATION_REJECTED` | Denied; account remains disabled |
+
+---
+
+## Endpoints
+
+### List Pending Applications
+
+```bash
+GET /api/applications
+```
+
+Returns a paginated list of users whose `application` value is `"pending"`. Requires `admin` or `root` role.
+
+**Query parameters:**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `page` | integer | `1` | Page number |
+| `limit` | integer | `10` | Records per page |
+
+```bash
+curl -s "http://localhost:5000/api/applications?page=1&limit=10" \
+  -H "Cookie: session=<your-session-cookie>"
+```
+
+**Response:**
+
+```json
+{
+  "data": [
+    {
+      "id": 12,
+      "username": "newvendor",
+      "email": "newvendor@example.com",
+      "created_at": "2024-11-20T14:03:55"
+    }
+  ],
+  "page": 1,
+  "pages": 1,
+  "total": 1
+}
+```
+
+---
+
+### Approve an Application
+
+```bash
+POST /api/applications/<user_id>/approve
+```
+
+Sets `application="accepted"` and `status=1` for the specified user. The user can now log in. Requires `admin` or `root` role. The action is recorded in the audit log under `entity_type="application"` with `action="approve"`.
+
+```bash
+curl -s -X POST http://localhost:5000/api/applications/12/approve \
+  -H "Cookie: session=<your-session-cookie>"
+```
+
+**Response:**
+
+```json
+{ "message": "Solicitud aprobada" }
+```
+
+Status codes: `200` on success, `500` if a database error occurs.
+
+---
+
+### Reject an Application
+
+```bash
+POST /api/applications/<user_id>/reject
+```
+
+Sets `application="rejected"` for the specified user. The `status` column remains `0`, so the account stays disabled. Requires `admin` or `root` role. The action is recorded in the audit log under `entity_type="application"` with `action="reject"`.
+
+```bash
+curl -s -X POST http://localhost:5000/api/applications/12/reject \
+  -H "Cookie: session=<your-session-cookie>"
+```
+
+**Response:**
+
+```json
+{ "message": "Solicitud rechazada" }
+```
+
+<Note>
+  Rejected users **cannot log in**. Their `status` remains `0` and the `application` field is set to `"rejected"`. If a previously rejected user should be granted access, an administrator must manually update their record via `PUT /api/users/<id>` to set both `status=1` and the desired `application` value.
+</Note>

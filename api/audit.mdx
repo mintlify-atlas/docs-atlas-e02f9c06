@@ -1,0 +1,244 @@
+---
+title: "Audit API — Query the Full Change History"
+sidebarTitle: "Audit"
+description: "Query StockManager's audit trail by user, entity type, action, or date range. Track every create, update, delete, login, and approval event across the system."
+---
+
+StockManager maintains a persistent audit log of every meaningful action taken through the application. Every time a product is created, a user is updated, a sale is approved, or a session is started, a structured record is written to the `audit_log` table — capturing who did it, what changed, when it happened, and whether the operation succeeded. The three endpoints below let you query that log by user, filter it system-wide, or trace the full change trail for a single entity.
+
+## How actions are recorded
+
+Audit entries are written automatically by the `@audit_action` decorator defined in `tools/audit_decorator.py`. Any Flask route handler decorated with it will have its execution wrapped: the actor's session user ID and the client IP are captured, pre/post snapshots are diffed for updates, and the resulting entry is written to the database regardless of whether the underlying operation succeeded or raised an exception.
+
+```python
+@audit_action(entity_type, action_name=None, id_param=None)
+```
+
+| Parameter | Values | Description |
+|-----------|--------|-------------|
+| `entity_type` | `product`, `sale`, `user`, `application` | The kind of object being acted upon |
+| `action_name` | `create`, `update`, `delete`, `activate`, `login`, `register`, `reset_password`, `change_password`, `approve`, `reject` | The action being performed. Defaults to the HTTP method if omitted |
+| `id_param` | e.g. `product_id`, `user_id` | Name of the URL keyword argument that holds the entity's primary key |
+
+The decorator resolves `user_id` from `session` and `entity_id` from the route's URL kwargs using `id_param`. For `update` actions it fetches the entity's current state both before and after the handler runs and stores a human-readable diff in the `description` field. For `create` actions it captures the request body (excluding `password`). For `delete` it records the entity's last known state.
+
+<Note>
+  An audit entry is **not** written if there is no `actor_id` in the session at the time of the call. Requests that fail authentication before reaching a decorated handler therefore produce no audit record.
+</Note>
+
+---
+
+## Endpoints
+
+### GET /api/user/:user_id
+
+Returns the paginated audit history for a single user. A logged-in user may query their own history. Only users with the `root` role may query another user's history.
+
+**Authentication:** Required  
+**Access:** Own history (any role) or any user (root only)
+
+#### Query parameters
+
+<ParamField query="action" type="string">
+  Filter entries to a specific action name, for example `login`, `create`, or `delete`. Case-insensitive — the query is uppercased internally before matching.
+</ParamField>
+
+<ParamField query="from" type="string">
+  Return only entries with a `timestamp` on or after this date. Format: `YYYY-MM-DD`.
+</ParamField>
+
+<ParamField query="to" type="string">
+  Return only entries with a `timestamp` on or before this date. Format: `YYYY-MM-DD`.
+</ParamField>
+
+<ParamField query="limit" type="integer">
+  Maximum number of records to return. Defaults to `50`.
+</ParamField>
+
+<ParamField query="offset" type="integer">
+  Number of records to skip before returning results. Defaults to `0`. Use together with `limit` to paginate.
+</ParamField>
+
+#### Example response
+
+```json
+{
+  "total": 142,
+  "records": [
+    {
+      "id": 891,
+      "user_id": 1,
+      "username": "jdoe",
+      "action": "LOGIN",
+      "entity_type": "user",
+      "entity_id": 1,
+      "description": "Acción de user #1",
+      "timestamp": "2025-06-10T08:34:12.441920",
+      "status": "success"
+    }
+  ]
+}
+```
+
+---
+
+### GET /api/all
+
+Returns the full system-wide audit log, spanning every user and entity type.
+
+**Authentication:** Required  
+**Access:** Root only
+
+<Note>
+  This endpoint is restricted to the `root` role. Any authenticated request from a user with `admin` or `vendedor` role will receive a `403 Forbidden` response.
+</Note>
+
+#### Query parameters
+
+Accepts the same `action`, `from`, `to`, `limit`, and `offset` parameters as `GET /api/user/:user_id`.
+
+#### Example response
+
+```json
+{
+  "total": 4310,
+  "records": [
+    {
+      "id": 4310,
+      "user_id": 2,
+      "username": "alice",
+      "action": "CREATE",
+      "entity_type": "product",
+      "entity_id": 47,
+      "description": "Nuevo Producto creado — Nombre: 'Bolt M6', Precio: '$0.25', Cantidad: '200', Stock mínimo: '50'",
+      "timestamp": "2025-06-10T09:01:05.882341",
+      "status": "success"
+    }
+  ]
+}
+```
+
+---
+
+### GET /api/entity/:entity_type/:entity_id
+
+Returns the complete ordered change trail for a single entity — every audit entry that references it, sorted oldest-first. This is useful for reconstructing the full lifecycle of a product, sale, or user account.
+
+**Authentication:** Required  
+**Access:** Admin or root
+
+| Path parameter | Description |
+|----------------|-------------|
+| `entity_type` | One of `product`, `sale`, `user`, `application` |
+| `entity_id` | Integer primary key of the entity |
+
+#### Example response
+
+```json
+{
+  "entity_type": "product",
+  "entity_id": 3,
+  "changes": [
+    {
+      "user_id": 2,
+      "username": "alice",
+      "action": "CREATE",
+      "old_value": null,
+      "new_value": {
+        "name": "Widget A",
+        "price": 9.99,
+        "quantity": 100,
+        "min_quantity": 10
+      },
+      "timestamp": "2025-05-01T11:20:00.000000",
+      "description": "Nuevo Producto creado — Nombre: 'Widget A', Precio: '$9.99', Cantidad: '100', Stock mínimo: '10'"
+    },
+    {
+      "user_id": 3,
+      "username": "bob",
+      "action": "UPDATE",
+      "old_value": {
+        "id": 3,
+        "name": "Widget A",
+        "price": 9.99,
+        "quantity": 100,
+        "min_quantity": 10
+      },
+      "new_value": {
+        "id": 3,
+        "name": "Widget A",
+        "price": 11.49,
+        "quantity": 100,
+        "min_quantity": 10
+      },
+      "timestamp": "2025-05-14T15:03:44.210000",
+      "description": "Cambios: Precio: '$9.99' → '$11.49'"
+    }
+  ]
+}
+```
+
+---
+
+## Audit entry fields
+
+The following fields appear in each record returned by `/api/user/:user_id` and `/api/all`.
+
+<ResponseField name="id" type="integer">
+  Auto-incremented primary key of the audit log entry.
+</ResponseField>
+
+<ResponseField name="user_id" type="integer">
+  The ID of the user who performed the action (the actor).
+</ResponseField>
+
+<ResponseField name="username" type="string">
+  The username of the actor, joined from the `users` table at query time.
+</ResponseField>
+
+<ResponseField name="action" type="string">
+  The action that was performed, stored in uppercase: `CREATE`, `UPDATE`, `DELETE`, `LOGIN`, etc.
+</ResponseField>
+
+<ResponseField name="entity_type" type="string">
+  The type of entity affected: `product`, `sale`, `user`, or `application`.
+</ResponseField>
+
+<ResponseField name="entity_id" type="integer | null">
+  The primary key of the affected entity. `null` for actions that do not target a specific record (for example, a bulk query).
+</ResponseField>
+
+<ResponseField name="description" type="string">
+  A human-readable summary of the change. For updates, this contains a field-by-field diff (e.g. `Cambios: Precio: '$9.99' → '$11.49'`). For creates it lists the initial field values; for deletes it identifies the entity by name.
+</ResponseField>
+
+<ResponseField name="timestamp" type="string">
+  ISO 8601 datetime string (`YYYY-MM-DDTHH:MM:SS.ffffff`) recorded at write time in local server time.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  `"success"` if the operation completed without an exception; `"error"` if the handler threw before returning a response.
+</ResponseField>
+
+---
+
+## Examples
+
+**Retrieve all recorded changes to product ID 3:**
+
+```bash
+curl -b cookies.txt 'http://127.0.0.1:5000/api/entity/product/3'
+```
+
+**Retrieve the 20 most recent login events for user ID 1:**
+
+```bash
+curl -b cookies.txt 'http://127.0.0.1:5000/api/user/1?action=login&limit=20'
+```
+
+**Retrieve all `delete` actions system-wide between two dates (root only):**
+
+```bash
+curl -b cookies.txt \
+  'http://127.0.0.1:5000/api/all?action=delete&from=2025-01-01&to=2025-06-30&limit=100'
+```

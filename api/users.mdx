@@ -1,0 +1,449 @@
+---
+title: "Users API — Account Management and Auth Endpoints"
+sidebarTitle: "Users"
+description: "REST endpoints for user CRUD, login, registration, password reset, and vendor autocomplete in StockManager. Includes role-based access requirements."
+---
+
+The Users API handles every aspect of identity in StockManager: session-based authentication, account registration with admin approval, full CRUD for the user roster, a three-step password recovery flow, vendor autocomplete for sale forms, and self-service profile settings. Most mutating operations require the `admin` or `root` role. Passwords are stored as Werkzeug `pbkdf2:sha256` hashes and are never returned in any response. The three valid roles are `admin`, `vendedor`, and `root`.
+
+---
+
+## Authentication
+
+### POST /api/login
+
+Authenticates a user and creates a server-side session. Accepts either a username or e-mail address in the `username` field.
+
+<ParamField body="username" type="string" required>
+  Username or e-mail address of the account.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  Plain-text password (transmitted over HTTPS, compared against stored hash).
+</ParamField>
+
+**Responses**
+
+<ResponseField name="success" type="boolean">
+  Always `true` on a 200 response.
+</ResponseField>
+
+<ResponseField name="user_id" type="integer">
+  Primary key of the authenticated user.
+</ResponseField>
+
+<ResponseField name="username" type="string">
+  Display name stored in the database.
+</ResponseField>
+
+<ResponseField name="role" type="string">
+  One of `admin`, `vendedor`, or `root`.
+</ResponseField>
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Login successful; session cookie set. |
+| `400` | `username` or `password` field is empty. |
+| `401` | Credentials do not match any account. |
+| `403` | Account is disabled (`status = 0`) or role is not recognized. |
+
+```bash
+curl -X POST http://localhost:5000/api/login \
+  -H "Content-Type: application/json" \
+  -c cookies.txt \
+  -d '{"username": "jdoe", "password": "s3cret"}'
+```
+
+```json
+{
+  "success": true,
+  "user_id": 7,
+  "username": "jdoe",
+  "role": "admin"
+}
+```
+
+---
+
+### POST /api/register
+
+Creates a new account with `status = 0` (inactive) and `application = "pending"`. The account cannot log in until an administrator approves it by setting `status = 1`. New accounts are always assigned the `vendedor` role.
+
+<ParamField body="username" type="string" required>
+  Desired username. Maximum 30 characters.
+</ParamField>
+
+<ParamField body="email" type="string" required>
+  Valid e-mail address. Maximum 100 characters.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  Minimum 6 characters.
+</ParamField>
+
+**Responses**
+
+<ResponseField name="success" type="boolean">
+  `true` on successful registration.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Human-readable confirmation, e.g. `"Cuenta creada. Espera la aprobación del administrador."`.
+</ResponseField>
+
+| Status | Meaning |
+|--------|---------|
+| `201` | Account created and pending approval. |
+| `400` | Missing fields, invalid e-mail, or password shorter than 6 characters. |
+| `409` | Username or e-mail already exists. |
+
+<Note>
+  Registered accounts are inactive until an admin changes their `status` to `1` via `PUT /api/users/:id`.
+</Note>
+
+---
+
+## User Management
+
+All endpoints in this section require the `admin` or `root` role.
+
+### GET /api/users
+
+Returns a paginated, searchable list of all users.
+
+<ParamField query="search" type="string">
+  Filters by username or e-mail (case-insensitive `LIKE` match). Omit to return all users.
+</ParamField>
+
+<ParamField query="page" type="integer">
+  Page number (1-based). Defaults to `1`.
+</ParamField>
+
+<ParamField query="limit" type="integer">
+  Records per page. Defaults to `10`; maximum `100`.
+</ParamField>
+
+**Response**
+
+<ResponseField name="data" type="array">
+  Array of user objects for the current page.
+
+  <Expandable title="User object fields">
+    <ResponseField name="id" type="integer">Row ID.</ResponseField>
+    <ResponseField name="username" type="string">Display name.</ResponseField>
+    <ResponseField name="email" type="string">E-mail address.</ResponseField>
+    <ResponseField name="role" type="string">`admin`, `vendedor`, or `root`.</ResponseField>
+    <ResponseField name="status" type="integer">`1` = active, `0` = inactive.</ResponseField>
+    <ResponseField name="created_at" type="string">ISO-8601 timestamp.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="total" type="integer">
+  Total number of matching records across all pages.
+</ResponseField>
+
+<ResponseField name="page" type="integer">
+  Current page number.
+</ResponseField>
+
+<ResponseField name="pages" type="integer">
+  Total number of pages.
+</ResponseField>
+
+<ResponseField name="limit" type="integer">
+  Page size used for this response.
+</ResponseField>
+
+```bash
+curl -b cookies.txt \
+  "http://localhost:5000/api/users?search=maria&page=1&limit=20"
+```
+
+---
+
+### GET /api/users/:id
+
+Returns a single user by their primary key.
+
+| Status | Meaning |
+|--------|---------|
+| `200` | User found. |
+| `404` | No user with that ID exists. |
+
+**Response** — same fields as the objects inside the `data` array above.
+
+```bash
+curl -b cookies.txt http://localhost:5000/api/users/7
+```
+
+---
+
+### POST /api/users
+
+Creates a new user directly without the registration approval flow. The new account is immediately active (`status = 1`).
+
+<ParamField body="username" type="string" required>
+  Display name for the account.
+</ParamField>
+
+<ParamField body="email" type="string" required>
+  Must be a valid e-mail and unique in the database.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  Plain-text password; stored as a hash.
+</ParamField>
+
+<ParamField body="role" type="string" required>
+  One of `admin`, `vendedor`, or `root`.
+</ParamField>
+
+| Status | Meaning |
+|--------|---------|
+| `201` | `{"message": "Usuario creado exitosamente"}` |
+| `400` | Missing required fields or invalid e-mail format. |
+| `409` | E-mail or username already registered. |
+
+```bash
+curl -X POST http://localhost:5000/api/users \
+  -b cookies.txt \
+  -H "Content-Type: application/json" \
+  -d '{"username": "jane", "email": "jane@example.com", "password": "pass123", "role": "vendedor"}'
+```
+
+---
+
+### PUT /api/users/:id
+
+Partially updates a user. Only fields present in the request body are evaluated; fields whose values are unchanged are silently ignored — no unnecessary writes occur. On success, a notification is automatically sent to the affected user.
+
+<ParamField body="username" type="string">
+  New display name.
+</ParamField>
+
+<ParamField body="email" type="string">
+  New e-mail address; must be unique.
+</ParamField>
+
+<ParamField body="role" type="string">
+  New role: `admin`, `vendedor`, or `root`.
+</ParamField>
+
+<ParamField body="status" type="integer">
+  `1` to activate, `0` to deactivate.
+</ParamField>
+
+<ParamField body="password" type="string">
+  If provided (and non-empty), the password is re-hashed and updated.
+</ParamField>
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Update applied (or no changes detected). |
+| `404` | User not found. |
+| `409` | New e-mail is already taken by another account. |
+
+---
+
+### DELETE /api/users/:id
+
+Performs a **soft delete** — sets `status = 0` rather than removing the row. The operation is refused when `id` matches the currently authenticated user.
+
+| Status | Meaning |
+|--------|---------|
+| `200` | `{"message": "Usuario dado de baja"}` |
+| `400` | Attempted to deactivate your own account. |
+
+<Warning>
+  This is a logical deletion only. The user record remains in the database and can be reactivated via `PUT /api/users/:id` with `{"status": 1}`.
+</Warning>
+
+---
+
+## Password Reset Flow
+
+All three steps below are **unauthenticated** — they are designed to be called from the public-facing login screen. The reset code is a cryptographically random 6-digit string valid for **15 minutes**.
+
+<Steps>
+  <Step title="Request a reset code">
+    `POST /api/users/reset-password`
+
+    <ParamField body="email" type="string" required>
+      Registered e-mail address of the account to recover.
+    </ParamField>
+
+    Returns `200 {"message": "Codigo enviado al correo"}` on success, `404` if the e-mail is not registered.
+
+    ```bash
+    curl -X POST http://localhost:5000/api/users/reset-password \
+      -H "Content-Type: application/json" \
+      -d '{"email": "jdoe@example.com"}'
+    ```
+  </Step>
+
+  <Step title="Validate the code">
+    `POST /api/users/validate-code`
+
+    <ParamField body="email" type="string" required>
+      Same e-mail used in step 1.
+    </ParamField>
+
+    <ParamField body="code" type="string" required>
+      The 6-digit code received by e-mail.
+    </ParamField>
+
+    Returns `200` if the code is valid, `401` if it has expired or does not match.
+
+    ```bash
+    curl -X POST http://localhost:5000/api/users/validate-code \
+      -H "Content-Type: application/json" \
+      -d '{"email": "jdoe@example.com", "code": "482916"}'
+    ```
+  </Step>
+
+  <Step title="Set a new password">
+    `POST /api/users/reset-password/change-password`
+
+    The server re-validates the code before applying the change. The code is deleted from the database immediately after a successful reset to prevent reuse.
+
+    <ParamField body="email" type="string" required>
+      Account e-mail address.
+    </ParamField>
+
+    <ParamField body="code" type="string" required>
+      The same 6-digit code from step 1.
+    </ParamField>
+
+    <ParamField body="new_password" type="string" required>
+      The desired new password.
+    </ParamField>
+
+    Returns `200 {"message": "Contraseña restablecida exitosamente"}` on success, `401` if the code is expired or invalid.
+
+    ```bash
+    curl -X POST http://localhost:5000/api/users/reset-password/change-password \
+      -H "Content-Type: application/json" \
+      -d '{"email": "jdoe@example.com", "code": "482916", "new_password": "newS3cret!"}'
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Vendor Autocomplete
+
+### GET /api/suggest/vendors
+
+Returns up to 10 active users with the `vendedor` or `admin` role whose username or e-mail matches the search string. Used to populate vendor picker inputs when creating a sale.
+
+**Auth:** any authenticated session.
+
+<ParamField query="q" type="string" required>
+  Search string matched against both `username` and `email` with a `LIKE` query. Returns an empty array when `q` is blank.
+</ParamField>
+
+**Response**
+
+<ResponseField name="data" type="array">
+  Matched user suggestions (maximum 10).
+
+  <Expandable title="Suggestion object">
+    <ResponseField name="id" type="integer">User ID.</ResponseField>
+    <ResponseField name="username" type="string">Display name.</ResponseField>
+    <ResponseField name="email" type="string">E-mail address.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+```bash
+curl -b cookies.txt "http://localhost:5000/api/suggest/vendors?q=carlos"
+```
+
+```json
+{
+  "data": [
+    {"id": 3, "username": "carlos_v", "email": "carlos@example.com"},
+    {"id": 11, "username": "carlos_admin", "email": "cadmin@example.com"}
+  ]
+}
+```
+
+---
+
+## Profile Settings
+
+Both endpoints below operate on the **currently authenticated user's** own account — no admin role is required.
+
+### PUT /api/settings/profile
+
+Updates the authenticated user's e-mail address.
+
+<ParamField body="email" type="string" required>
+  New e-mail address. Must contain `@` and `.`.
+</ParamField>
+
+**Response**
+
+<ResponseField name="success" type="boolean">
+  `true` on a successful update.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Confirmation string, e.g. `"Perfil actualizado correctamente"`.
+</ResponseField>
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Profile updated. |
+| `400` | `email` is missing or malformed. |
+
+```bash
+curl -X PUT http://localhost:5000/api/settings/profile \
+  -b cookies.txt \
+  -H "Content-Type: application/json" \
+  -d '{"email": "new_address@example.com"}'
+```
+
+---
+
+### PUT /api/settings/password
+
+Changes the authenticated user's password. The current password must be supplied and verified before the new one is stored.
+
+<ParamField body="current_password" type="string" required>
+  The user's existing password (verified against stored hash).
+</ParamField>
+
+<ParamField body="new_password" type="string" required>
+  Desired new password. Minimum 6 characters.
+</ParamField>
+
+<ParamField body="confirm_password" type="string" required>
+  Must match `new_password` exactly.
+</ParamField>
+
+**Response**
+
+<ResponseField name="success" type="boolean">
+  `true` on a successful change.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Confirmation string, e.g. `"Contraseña actualizada correctamente"`.
+</ResponseField>
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Password updated. |
+| `400` | Missing fields, passwords do not match, or new password is shorter than 6 characters. |
+| `401` | `current_password` is incorrect. |
+
+```bash
+curl -X PUT http://localhost:5000/api/settings/password \
+  -b cookies.txt \
+  -H "Content-Type: application/json" \
+  -d '{
+    "current_password": "oldS3cret",
+    "new_password": "newS3cret!",
+    "confirm_password": "newS3cret!"
+  }'
+```

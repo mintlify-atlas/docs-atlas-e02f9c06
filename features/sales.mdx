@@ -1,0 +1,172 @@
+---
+title: "Sales Registration and Transaction History"
+sidebarTitle: "Sales"
+description: "Register single-item and multi-item sales in StockManager, select payment methods, browse transaction history with filters, and edit past sales as admin."
+---
+
+StockManager provides two dedicated endpoints for recording sales: a streamlined single-product path suited to barcode-scanner workflows and a bulk path for multi-item transactions. Both endpoints perform stock validation atomically — quantities are decremented and the inventory is updated in the same database transaction — so your stock levels are always consistent with your sales history.
+
+## Single-item sale
+
+Use `POST /api/sales` when you want to register one product at a time, identified by its barcode.
+
+**Request body:**
+
+| Field | Type | Required | Default |
+|---|---|---|---|
+| `barcode` | string | ✅ | — |
+| `quantity` | integer | ✅ | — |
+| `payment_method` | string | ❌ | `"Efectivo"` |
+
+<Warning>
+If the requested `quantity` exceeds the product's available stock, the endpoint returns **HTTP 400** with `{"error": "Stock insuficiente"}`. The sale is not recorded and no inventory change occurs. Always check the current `stock` value before submitting if your client caches product data.
+</Warning>
+
+**Successful response (HTTP 201):**
+
+```json
+{
+  "message": "Venta registrada: Whole Milk 1L x3",
+  "product": "Whole Milk 1L",
+  "quantity": 3,
+  "total": 5.97
+}
+```
+
+### curl example
+
+```bash
+curl -X POST http://localhost:5000/api/sales \
+  -H "Content-Type: application/json" \
+  -d '{
+    "barcode": "7501234567890",
+    "quantity": 3,
+    "payment_method": "Efectivo"
+  }'
+```
+
+## Bulk sale
+
+Use `POST /api/sales/bulk` when a customer purchases multiple products in a single transaction. All items are validated before any stock is decremented; if any product has insufficient stock the entire request is rejected.
+
+**Request body:**
+
+| Field | Type | Required |
+|---|---|---|
+| `items` | array of `{item_id, quantity}` | ✅ |
+| `payment_method` | string | ❌ (defaults to `"Efectivo"`) |
+
+**Successful response (HTTP 201):**
+
+```json
+{
+  "ok": true,
+  "sale_id": 178,
+  "items": [
+    {
+      "item_id": 12,
+      "name": "Orange Juice 1L",
+      "quantity": 2,
+      "unit_price": 2.49,
+      "subtotal": 4.98
+    },
+    {
+      "item_id": 34,
+      "name": "Granola Bar",
+      "quantity": 5,
+      "unit_price": 0.89,
+      "subtotal": 4.45
+    }
+  ],
+  "total": 9.43
+}
+```
+
+### curl example
+
+```bash
+curl -X POST http://localhost:5000/api/sales/bulk \
+  -H "Content-Type: application/json" \
+  -d '{
+    "items": [
+      { "item_id": 12, "quantity": 2 },
+      { "item_id": 34, "quantity": 5 }
+    ],
+    "payment_method": "Tarjeta"
+  }'
+```
+
+## Payment methods
+
+The `payment_method` field accepts any string. `"Efectivo"` is used when the field is omitted. Common values used in practice include `"Efectivo"`, `"Tarjeta"`, `"Transferencia"`, and `"QR"`, but StockManager does not restrict you to a fixed list — enter whatever your business uses.
+
+## Automatic low-stock check
+
+After every successful bulk sale, `check_and_notify_low_stock` is triggered automatically. If any product involved in the sale drops below its `min_quantity` threshold, a `warning` notification is pushed to the current user over the SSE stream. See [Notifications](/features/notifications) for details on how to consume these events.
+
+## Sales history
+
+`GET /api/sales` returns a paginated list of past transactions with full product details per sale.
+
+**Query parameters:**
+
+| Parameter | Type | Description |
+|---|---|---|
+| `from` | `YYYY-MM-DD` | Start of date range |
+| `to` | `YYYY-MM-DD` | End of date range |
+| `product` | string | Filter by product name (partial match) |
+| `vendedor` | string | Filter by vendor username or email (partial match) |
+| `page` | integer | Page number, 1-based (default: `1`) |
+| `limit` | integer | Records per page, max 100 (default: `10`) |
+
+**Response shape:**
+
+```json
+{
+  "data": [
+    {
+      "id": 178,
+      "date": "2025-07-14 11:23:05",
+      "products": [
+        { "name": "Orange Juice 1L", "quantity": 2, "price": 2.49 },
+        { "name": "Granola Bar", "quantity": 5, "price": 0.89 }
+      ],
+      "total_quantity": 7,
+      "total": 9.43,
+      "vendedor": "jsmith",
+      "vendor_id": 4,
+      "payment_method": "Tarjeta"
+    }
+  ],
+  "total": 312,
+  "page": 1,
+  "pages": 32,
+  "limit": 10
+}
+```
+
+## Viewing a single sale
+
+`GET /api/sales/<id>` returns the complete detail of one transaction, including all product lines, the vendor username, and the payment method.
+
+## Admin: edit a sale
+
+Administrators can correct past transactions using two endpoints:
+
+- **`GET /api/sales/<id>/edit`** — fetches the full sale data in an editable format, including each `item_id`, quantity, price, and current product name.
+- **`PUT /api/sales/<id>`** — saves the edited version. The update is atomic: stock from the original sale is restored first, then new quantities are deducted.
+
+**`PUT /api/sales/<id>` request body:**
+
+```json
+{
+  "items": [
+    { "item_id": 12, "quantity": 1 },
+    { "item_id": 34, "quantity": 6 }
+  ],
+  "vendor_id": 4,
+  "payment_method": "Efectivo"
+}
+```
+
+After a successful edit, `check_and_notify_low_stock` runs again to catch any items that fell below threshold as a result of the change.

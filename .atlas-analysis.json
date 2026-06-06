@@ -1,0 +1,126 @@
+{
+  "projectType": "saas",
+  "projectName": "StockManager",
+  "projectDescription": "A full-stack inventory and sales management desktop application built with Flask, SQLite, and PyWebView, featuring product stock control, sales tracking, analytics, CSV import, notifications, and a REST API.",
+  "theme": "luma",
+  "primaryColor": "#4f46e5",
+  "lightColor": "#6366f1",
+  "darkColor": "#0b0d12",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": ["introduction", "quickstart", "installation"]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/inventory",
+              "features/sales",
+              "features/metrics",
+              "features/notifications",
+              "features/csv-import"
+            ]
+          },
+          {
+            "group": "Administration",
+            "pages": [
+              "admin/user-management",
+              "admin/roles-permissions",
+              "admin/audit-log",
+              "admin/applications"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/environment",
+              "configuration/database",
+              "configuration/desktop-mode"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": ["api/overview", "api/authentication"]
+          },
+          {
+            "group": "Endpoints",
+            "pages": [
+              "api/products",
+              "api/sales",
+              "api/users",
+              "api/metrics",
+              "api/notifications",
+              "api/audit",
+              "api/health"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Product inventory management with barcode support",
+    "Sales registration (single and bulk) with payment method tracking",
+    "Real-time low-stock and expiration alerts via SSE notifications",
+    "Business analytics dashboard with KPIs, charts, and heatmaps",
+    "CSV product import",
+    "Role-based access control (root, admin, vendor)",
+    "Full audit log for all entity changes",
+    "User registration approval workflow",
+    "PyWebView desktop wrapper (runs as a native desktop app)",
+    "Password reset via email with 6-digit verification codes"
+  ],
+  "publicApiSurface": [
+    "POST /api/login",
+    "POST /api/register",
+    "GET /api/products",
+    "GET /api/products_all",
+    "GET /api/products/<id>",
+    "POST /api/products",
+    "PUT /api/products/<id>",
+    "DELETE /api/products/<id>",
+    "POST /api/products/<id>/activate",
+    "GET /api/items?q=",
+    "GET /api/sales",
+    "POST /api/sales",
+    "POST /api/sales/bulk",
+    "GET /api/sales/<id>",
+    "PUT /api/sales/<id>",
+    "GET /api/users",
+    "POST /api/users",
+    "PUT /api/users/<id>",
+    "DELETE /api/users/<id>",
+    "POST /api/users/reset-password",
+    "POST /api/users/validate-code",
+    "POST /api/users/reset-password/change-password",
+    "GET /api/suggest/vendors",
+    "GET /api/stats",
+    "GET /api/metrics",
+    "GET /api/never-sold",
+    "GET /api/notifications/unread",
+    "GET /api/notifications/all",
+    "POST /api/notifications/<id>/read",
+    "POST /api/notifications/read-all",
+    "POST /api/notifications/create",
+    "DELETE /api/notifications/<id>/delete",
+    "GET /api/notifications/stream",
+    "GET /api/applications",
+    "POST /api/applications/<user_id>/approve",
+    "POST /api/applications/<user_id>/reject",
+    "GET /api/user/<user_id>",
+    "GET /api/all",
+    "GET /api/entity/<entity_type>/<entity_id>",
+    "PUT /api/settings/profile",
+    "PUT /api/settings/password",
+    "GET /api/health"
+  ]
+}

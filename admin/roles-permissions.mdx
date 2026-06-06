@@ -1,0 +1,167 @@
+---
+title: "Role-Based Access Control in StockManager"
+sidebarTitle: "Roles & Permissions"
+description: "StockManager enforces three roles — root, admin, and vendor — using Flask session-based auth and decorators. Learn what each role can access."
+---
+
+StockManager uses a lightweight role-based access control (RBAC) system built on top of Flask sessions. Every authenticated request carries a `role` value that is checked by the `require_role` decorator before any route handler executes. Three roles exist — `root`, `admin`, and `vendedor` — each with a distinct scope of access across the application.
+
+## Roles
+
+<CardGroup cols={3}>
+  <Card title="root" icon="shield-halved">
+    Full, unrestricted access. Can view the complete audit log, manage all users, and perform any action in the system. There are no API restrictions for `root`.
+  </Card>
+  <Card title="admin" icon="user-gear">
+    Can manage products, users, and sales edits. Can review and act on registration applications, send notifications, and view entity-scoped audit trails.
+  </Card>
+  <Card title="vendedor" icon="tag">
+    Vendor role. Can create new sales, view the product catalog, and read their own notifications. Cannot access user management or audit log endpoints.
+  </Card>
+</CardGroup>
+
+The role constants are defined in `data/roles.py`:
+
+```python
+class ROLES:
+    ADMIN  = 'admin'
+    VENDOR = 'vendedor'
+    ROOT   = 'root'
+```
+
+---
+
+## Permission Matrix
+
+| Feature | `root` | `admin` | `vendedor` |
+|---|:---:|:---:|:---:|
+| Products — full CRUD | ✅ | ✅ | ❌ |
+| Sales — create | ✅ | ✅ | ✅ |
+| Sales — edit / void | ✅ | ✅ | ❌ |
+| Users — full CRUD | ✅ | ✅ | ❌ |
+| Metrics & reports view | ✅ | ✅ | ❌ |
+| Audit log — own history | ✅ | ✅ | ✅ |
+| Audit log — all records | ✅ | ❌ | ❌ |
+| Audit log — entity trail | ✅ | ✅ | ❌ |
+| Applications — approve/reject | ✅ | ✅ | ❌ |
+
+---
+
+## How Authentication Works
+
+StockManager uses **Flask server-side sessions**. After a successful login the server writes three values into the session:
+
+```python
+session["user_id"] = user_id    # integer PK from the users table
+session["username"] = username  # display name
+session["role"]     = role      # "root" | "admin" | "vendedor"
+```
+
+The session is backed by a signed cookie. The application is configured with `SESSION_COOKIE_SAMESITE = "Lax"` to prevent cross-site request forgery while still allowing normal same-origin navigation.
+
+### Logging In
+
+```bash
+POST /api/login
+```
+
+**Request body:**
+
+```json
+{
+  "username": "alice",
+  "password": "s3cur3pass"
+}
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "user_id": 7,
+  "username": "alice",
+  "role": "admin"
+}
+```
+
+Status codes: `200` on success, `400` for missing credentials, `401` for wrong password, `403` if the account is disabled or the role is unrecognized.
+
+---
+
+## The `require_role` Decorator
+
+All route-level authorization is handled by `require_role` from `api/auth_utils.py`. It is a single unified decorator that covers both authentication (session check) and authorization (role check).
+
+```python
+def require_role(*roles):
+    """
+    Without arguments: acts as require_auth (session check only).
+    With roles: also verifies session["role"] is in the allowed set.
+    """
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            if not session.get("user_id"):
+                return _unauthorized()           # 401
+            if roles and session.get("role") not in roles:
+                return _forbidden()              # 403
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
+```
+
+### Usage Examples
+
+```python
+from api.auth_utils import require_role, require_auth
+from data.roles import ROLES
+
+# Any authenticated user
+@require_auth
+def my_endpoint():
+    ...
+
+# Admin or root only
+@require_role(ROLES.ADMIN, ROLES.ROOT)
+def admin_endpoint():
+    ...
+
+# Root only
+@require_role(ROLES.ROOT)
+def root_only_endpoint():
+    ...
+```
+
+### Convenience Aliases
+
+`api/auth_utils.py` exports two pre-built aliases so common guard patterns can be applied without repeating the role list:
+
+```python
+require_auth  = require_role()             # any authenticated session
+require_admin = require_role(ROLES.ADMIN)  # admin only
+require_root  = require_role(ROLES.ROOT)   # root only
+```
+
+<Note>
+  `require_auth` is identical to calling `require_role()` with no arguments. It verifies that `session["user_id"]` is set but does not restrict by role.
+</Note>
+
+---
+
+## Error Responses
+
+When a request fails an auth check the API returns JSON for any route under `/api/` or for requests that send `X-Requested-With: XMLHttpRequest` or prefer `application/json`. Browser navigation to protected pages receives an HTML redirect to the login or 403 template instead.
+
+| Status | Meaning |
+|---|---|
+| `401 Unauthorized` | No active session (`user_id` not in session) |
+| `403 Forbidden` | Authenticated, but the user's role is not in the allowed set |
+
+```json
+{ "error": "No autenticado" }
+```
+
+```json
+{ "error": "Permiso denegado" }
+```

@@ -1,0 +1,137 @@
+---
+title: "Running StockManager as a Desktop Application"
+sidebarTitle: "Desktop Mode"
+description: "StockManager wraps its Flask server in a PyWebView native window. Learn how to run it, build a standalone executable with PyInstaller, and configure window settings."
+---
+
+StockManager is a web application at its core, but it ships with a native desktop wrapper powered by [PyWebView](https://pywebview.flowrl.com/). When you run `python main.py`, the application starts the Waitress WSGI server in a background thread and then opens a platform-native window that points to `http://127.0.0.1:5000` — giving users a full desktop experience without requiring a separate browser. No web server setup, no exposed port visible to the network.
+
+## How It Works
+
+`main.py` orchestrates the entire startup sequence in a single script. Waitress runs as a daemon thread so that the process stays alive only while the PyWebView window is open; closing the window triggers the `cleanup()` function, which stops the scheduler, shuts down Waitress, and closes all database connections.
+
+## Window Configuration
+
+The native window is created with `webview.create_window()` using these settings:
+
+| Setting | Value |
+|---|---|
+| Title | `"Stockly"` |
+| Default width | `1200 px` |
+| Default height | `800 px` |
+| Minimum width | `800 px` |
+| Minimum height | `600 px` |
+| URL | `http://127.0.0.1:5000` |
+
+## Startup Sequence
+
+<Steps>
+  <Step title="Scheduler starts">
+    Before any server thread is launched, the background `Scheduler` registers and starts
+    its periodic tasks: log cleanup every 24 hours and root-user integrity check every
+    30 minutes. Both run in separate daemon threads.
+  </Step>
+  <Step title="Waitress starts in a daemon thread">
+    `run_waitress()` is called in a `threading.Thread(daemon=True)` named `"waitress"`.
+    Because it is a daemon thread, it is automatically terminated when the main thread
+    (the PyWebView event loop) exits.
+  </Step>
+  <Step title="Health check waits for port 5000">
+    Rather than sleeping for a fixed delay, `main.py` calls `wait_for_server()`, which
+    polls the TCP port every 50 ms until a connection succeeds or a 15-second timeout
+    is reached. A `RuntimeError` is raised if the server does not become ready in time.
+  </Step>
+  <Step title="PyWebView window opens">
+    Once the health check succeeds, `webview.create_window()` is called and
+    `webview.start()` enters the native GUI event loop. The application is now fully
+    running. On Linux, if the resolved icon path exists, the icon is passed to
+    `webview.start(icon=icon_path)`; on Windows and macOS the icon is embedded in the
+    executable at build time.
+  </Step>
+</Steps>
+
+## Running in Development Mode
+
+To run the Flask server directly without PyWebView (useful for browser-based development and hot-reload), use `run-dev.py`:
+
+```bash
+python run-dev.py
+```
+
+This sets `DEBUG=1` in the environment and calls `app.run(host="127.0.0.1", port=5000, debug=True)`, which enables Werkzeug's reloader and interactive debugger. The PyWebView window is not opened.
+
+## Platform Notes
+
+### Linux
+
+Linux requires GTK3 and WebKit2GTK to be installed on the host system before running `main.py`:
+
+```bash
+# Ubuntu / Debian
+sudo apt-get install python3-gi gir1.2-gtk-3.0 gir1.2-webkit2-4.1
+
+# Arch Linux / Manjaro
+sudo pacman -S python-gobject gtk3 webkit2gtk-4.1
+
+# Fedora / RHEL
+sudo dnf install python3-gobject gtk3 webkit2gtk4.1
+```
+
+`main.py` sets `PYWEBVIEW_GTK=1` and `WEBKIT_DISABLE_DMABUF_RENDERER=1` automatically via `os.environ.setdefault`, so both flags are active without any manual configuration.
+
+### Windows and macOS
+
+No additional system dependencies are required. PyWebView uses the platform's built-in web engine (WebView2 / EdgeChromium on Windows, WKWebView on macOS).
+
+## Building a Standalone Executable
+
+StockManager uses [PyInstaller](https://pyinstaller.org/) to produce a self-contained distributable. The build is fully described in `build.spec` at the project root.
+
+```bash
+pyinstaller build.spec
+```
+
+The output is placed in `dist/stockly/`. On Windows the entry point is `dist/stockly/stockly.exe`; on Linux it is `dist/stockly/stockly`.
+
+<Note>
+  When the application is running from the compiled bundle, `getattr(sys, "frozen", False)`
+  returns `True`. This sets `IS_EXECUTABLE = True` and causes the `APP_MODE` template
+  variable to display `"Ejecutable"` instead of `"Desarrollo"`. The database and log paths
+  are also redirected to user-writable directories (see the [Database](/configuration/database)
+  page for the exact paths).
+</Note>
+
+### What `build.spec` Bundles
+
+The spec file explicitly includes:
+
+- `templates/` and `static/` directories
+- The `bd/` and `api/` packages
+- The `.env` file (for SMTP credentials in the distributed build)
+- PyWebView data files and, on Linux, GObject Introspection typelibs
+- Hidden imports for Flask, Waitress, Jinja2, SQLite3, PyWebView, barcode, Pillow, and ReportLab
+
+Heavy packages that are not part of the application (`tkinter`, `numpy`, `pandas`, `matplotlib`, `scipy`) are explicitly excluded to keep the bundle size small.
+
+### GitHub Actions Build
+
+The repository includes a workflow at `.github/workflows/build.yml` that automatically produces release artifacts for three platforms when a `v*.*.*` tag is pushed:
+
+| Artifact | Runner | Format |
+|---|---|---|
+| `Stockly-windows-x64.zip` | `windows-latest` | ZIP containing `stockly\stockly.exe` |
+| `Stockly-ubuntu-x64.tar.gz` | `ubuntu-latest` | Tarball containing `stockly/stockly` |
+| `Stockly-arch-x64.tar.gz` | `ubuntu-latest` (Arch container) | Tarball containing `stockly/stockly` |
+
+On Linux runners, `PyGObject` and `pycairo` are installed from pip; on the Windows runner, `pythonnet` is added for the WinForms backend. The workflow uses PyInstaller 6.19.0 pinned to ensure reproducible builds.
+
+## Icon Resolution
+
+<Tip>
+  The application icon (`static/app/icon.png` on Linux/macOS, `static/app/icon.ico` on
+  Windows) is resolved correctly whether you are running from source or from the compiled
+  executable. In source mode, `base_path` is set to `os.path.dirname(os.path.abspath(__file__))`.
+  In executable mode, `base_path` is set to `sys._MEIPASS`, which is the temporary directory
+  PyInstaller extracts bundled assets into at runtime. The full icon path is always
+  `os.path.join(base_path, "static", "app", "icon.png")`.
+</Tip>

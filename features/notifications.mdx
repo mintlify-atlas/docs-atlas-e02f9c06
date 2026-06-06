@@ -1,0 +1,163 @@
+---
+title: "Real-Time Notifications with Server-Sent Events"
+sidebarTitle: "Notifications"
+description: "StockManager pushes real-time alerts for low stock, sales, and admin actions using SSE. Learn how to connect, receive events, and manage notification state."
+---
+
+StockManager delivers in-app alerts without polling. Instead of having the browser ask the server "any news?" on a timer, the server pushes events over a persistent HTTP connection using the [Server-Sent Events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events) protocol. When a sale is recorded, a product drops below its minimum stock, or an admin performs an account action, the affected user's browser receives an event within milliseconds — no page reload required.
+
+## SSE stream — `GET /api/notifications/stream`
+
+Opening a connection to this endpoint establishes a long-lived HTTP response with `Content-Type: text/event-stream`. The session must be authenticated; unauthenticated requests are rejected.
+
+**On connect** the server immediately sends an `init` event carrying the user's current unread notifications (up to 5) and total unread count:
+
+```
+event: init
+data: {"notifications": [...], "count": 3}
+```
+
+**When a new notification arrives** for the connected user, the server sends an `update` event with the latest unread notifications (up to 10) and updated count:
+
+```
+event: update
+data: {"notifications": [...], "count": 4}
+```
+
+**Heartbeat:** if no notification has been sent for 25 seconds, the server sends a comment line (`: heartbeat`) to keep the connection alive through proxies and load balancers.
+
+<Note>
+Each user maintains at most one active SSE connection. If a second browser tab (or window) connects with the same session, the server cancels the previous connection and attaches the new one. This prevents silent duplicate connections from accumulating.
+</Note>
+
+### JavaScript example
+
+```javascript
+const stream = new EventSource("/api/notifications/stream");
+
+stream.addEventListener("init", (e) => {
+  const { notifications, count } = JSON.parse(e.data);
+  renderNotificationBadge(count);
+  renderNotificationList(notifications);
+});
+
+stream.addEventListener("update", (e) => {
+  const { notifications, count } = JSON.parse(e.data);
+  renderNotificationBadge(count);
+  renderNotificationList(notifications);
+});
+
+stream.onerror = () => {
+  // Browser will automatically attempt to reconnect
+  console.warn("SSE connection lost, retrying...");
+};
+```
+
+## Notification object shape
+
+Every notification returned by the SSE stream or the REST endpoints has the following structure:
+
+```json
+{
+  "id": 512,
+  "title": "Stock bajo",
+  "message": "El producto Whole Milk 1L (ID: 42) tiene stock bajo (4 unidades).",
+  "type": "warning",
+  "action_url": null,
+  "created_at": "2025-07-14 11:45:02",
+  "is_read": false
+}
+```
+
+| Field | Description |
+|---|---|
+| `id` | Unique notification ID |
+| `title` | Short heading shown in the notification panel |
+| `message` | Full description of the event |
+| `type` | `success`, `warning`, `error`, or `info` |
+| `action_url` | Optional URL the user can follow for context (may be `null`) |
+| `created_at` | ISO-style datetime string |
+| `is_read` | `false` until the user or admin marks it read |
+
+## Automatic notification triggers
+
+StockManager creates notifications automatically in the following situations:
+
+<CardGroup cols={2}>
+  <Card title="Low stock" icon="triangle-exclamation">
+    Triggered after any product update or bulk sale when a product's `quantity` drops below its `min_quantity`. Type: `warning`.
+  </Card>
+  <Card title="Product created" icon="plus">
+    Sent to the acting admin when a new product is added to the catalog. Type: `success`.
+  </Card>
+  <Card title="Product updated" icon="pen">
+    Sent to the acting admin when a product's fields are changed. Type: `success`.
+  </Card>
+  <Card title="Product disabled" icon="ban">
+    Sent to the acting admin when a product is soft-deleted. Type: `warning`.
+  </Card>
+  <Card title="Product activated" icon="circle-check">
+    Sent to the acting admin when a disabled product is re-enabled. Type: `success`.
+  </Card>
+  <Card title="Sale registered" icon="receipt">
+    Sent to the vendor after a successful bulk sale. Type: `success`.
+  </Card>
+  <Card title="Sale updated" icon="pen-to-square">
+    Sent to the admin after editing a past transaction. Type: `success`.
+  </Card>
+  <Card title="Sale error" icon="circle-xmark">
+    Sent when a sale attempt fails internally. Type: `error`.
+  </Card>
+</CardGroup>
+
+## Manual notifications (admin only)
+
+Admins can create a notification for any user via `POST /api/notifications/create`:
+
+```bash
+curl -X POST http://localhost:5000/api/notifications/create \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": 7,
+    "title": "Scheduled maintenance",
+    "message": "The system will restart at 23:00 tonight.",
+    "type": "info",
+    "action_url": null
+  }'
+```
+
+```json
+{ "message": "Notificación creada exitosamente" }
+```
+
+Required fields: `user_id`, `title`, `message`. The `type` field defaults to `"info"` if omitted.
+
+## Reading notifications
+
+### Unread notifications
+
+`GET /api/notifications/unread` returns the last 10 unread notifications for the current user, plus a total unread count:
+
+```json
+{
+  "notifications": [...],
+  "unread_count": 2
+}
+```
+
+### All notifications (paginated)
+
+`GET /api/notifications/all` accepts `limit` (default: 20) and `offset` (default: 0) query parameters and returns all notifications for the current user, read and unread alike.
+
+## Marking notifications as read
+
+| Endpoint | Effect |
+|---|---|
+| `POST /api/notifications/<id>/read` | Marks a single notification as read |
+| `POST /api/notifications/read-all` | Marks all of the current user's notifications as read |
+
+Both endpoints return HTTP 200 with a confirmation message on success.
+
+<Note>
+Each user can only see their own notifications. There is no endpoint that returns another user's notifications unless you are operating as that user. Notification isolation is enforced at the database query level using the `user_id` stored in the session.
+</Note>

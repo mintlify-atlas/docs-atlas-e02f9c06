@@ -1,0 +1,251 @@
+---
+title: "Manage Users, Roles, and Account Status"
+sidebarTitle: "User Management"
+description: "Create, update, and deactivate user accounts in StockManager. Assign roles, reset passwords, and manage account status from the admin panel or API."
+---
+
+StockManager stores every user account in a single `users` table. Administrators and root users can list, create, update, and deactivate accounts through the REST API while vendors interact with the system using the credentials assigned to them. All write operations are recorded automatically in the audit log via the `@audit_action` decorator.
+
+## User Fields
+
+Each user record exposes the following fields in API responses:
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | integer | Auto-incremented primary key |
+| `username` | string | Unique display name (max 30 chars) |
+| `email` | string | Unique email address (max 100 chars) |
+| `role` | string | One of `root`, `admin`, or `vendedor` |
+| `status` | integer | `1` = active, `0` = disabled |
+| `created_at` | string | ISO 8601 creation timestamp |
+
+## CRUD Operations
+
+### List Users
+
+```bash
+GET /api/users
+```
+
+Returns a paginated list of all users. Requires `admin` or `root` role.
+
+**Query parameters:**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `search` | string | `""` | Filters by `username` or `email` (partial match) |
+| `page` | integer | `1` | Page number |
+| `limit` | integer | `10` | Results per page (max 100) |
+
+**Response:**
+
+```json
+{
+  "data": [
+    {
+      "id": 3,
+      "username": "jdoe",
+      "email": "jdoe@example.com",
+      "role": "vendedor",
+      "status": 1,
+      "created_at": "2024-11-01T10:22:00"
+    }
+  ],
+  "total": 42,
+  "page": 1,
+  "pages": 5,
+  "limit": 10
+}
+```
+
+---
+
+### Get a Single User
+
+```bash
+GET /api/users/<id>
+```
+
+Returns one user record by ID. Requires `admin` or `root` role.
+
+**Response:** `200 OK` with the user object, or `404` if not found.
+
+---
+
+### Create a User
+
+```bash
+POST /api/users
+```
+
+Creates a new active account with `status=1` and `application="accepted"`. Requires `admin` or `root` role.
+
+**Required body fields:**
+
+| Field | Constraint |
+|---|---|
+| `username` | Unique, max 30 chars |
+| `email` | Valid format, unique, max 100 chars |
+| `password` | Max 128 chars, stored as a Werkzeug hash |
+| `role` | One of `root`, `admin`, `vendedor` |
+
+```bash
+curl -s -X POST http://localhost:5000/api/users \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "jane",
+    "email": "jane@example.com",
+    "password": "s3cur3pass",
+    "role": "vendedor"
+  }'
+```
+
+**Response:**
+
+```json
+{ "message": "Usuario creado exitosamente" }
+```
+
+Status codes: `201` on success, `400` for missing/invalid fields, `409` if the email or username already exists.
+
+---
+
+### Update a User
+
+```bash
+PUT /api/users/<id>
+```
+
+Updates only the fields that are present in the request body **and** differ from the current value — no unnecessary writes occur. Requires `admin` or `root` role.
+
+Accepted fields: `username`, `email`, `role`, `status`, `password`.
+
+**Response:** `200 OK`. The target user receives an in-app notification when their account is updated. Returns `200` with `"No hay cambios que aplicar"` if all submitted values match the current record.
+
+---
+
+### Disable a User
+
+```bash
+DELETE /api/users/<id>
+```
+
+<Warning>
+  This is a **soft delete**. The user record is never removed from the database — `status` is set to `0` (disabled). Disabled users cannot log in, but all their associated sales and audit records remain intact.
+</Warning>
+
+Requires `admin` or `root` role. You cannot disable your own account; doing so returns `400`.
+
+**Response:**
+
+```json
+{ "message": "Usuario dado de baja" }
+```
+
+---
+
+## Password Reset Flow
+
+The reset flow is a three-step process that does not require the user to be authenticated. A 6-digit numeric code is generated, stored temporarily, and delivered by email. The code expires after **15 minutes**.
+
+<Steps>
+  <Step title="Request a Reset Code">
+    Send the user's email address to receive a 6-digit code.
+
+    ```bash
+    curl -s -X POST http://localhost:5000/api/users/reset-password \
+      -H "Content-Type: application/json" \
+      -d '{ "email": "jane@example.com" }'
+    ```
+
+    **Response:**
+
+    ```json
+    { "message": "Codigo enviado al correo" }
+    ```
+
+    Status codes: `200` on success, `400` for missing/invalid email, `404` if no account exists.
+  </Step>
+
+  <Step title="Validate the Code">
+    Submit the email and the 6-digit code that was delivered to the inbox.
+
+    ```bash
+    curl -s -X POST http://localhost:5000/api/users/validate-code \
+      -H "Content-Type: application/json" \
+      -d '{ "email": "jane@example.com", "code": "482916" }'
+    ```
+
+    **Response:**
+
+    ```json
+    { "message": "Código verificado, puedes restablecer tu contraseña" }
+    ```
+
+    Status codes: `200` on success, `401` if the code is invalid or expired.
+  </Step>
+
+  <Step title="Set the New Password">
+    Submit the email, the verified code, and the desired new password. The code is deleted upon success.
+
+    ```bash
+    curl -s -X POST http://localhost:5000/api/users/reset-password/change-password \
+      -H "Content-Type: application/json" \
+      -d '{
+        "email": "jane@example.com",
+        "code": "482916",
+        "new_password": "newS3cur3pass"
+      }'
+    ```
+
+    **Response:**
+
+    ```json
+    { "message": "Contraseña restablecida exitosamente" }
+    ```
+
+    Status codes: `200` on success, `401` if the code was not verified or has expired, `404` if no account is found.
+  </Step>
+</Steps>
+
+---
+
+## Vendor Autocomplete
+
+```bash
+GET /api/suggest/vendors?q=<query>
+```
+
+Returns up to 10 active users with the `vendedor` or `admin` role whose `username` or `email` contains the search string. Requires any authenticated session.
+
+**Query parameters:**
+
+| Parameter | Description |
+|---|---|
+| `q` | Partial username or email to match |
+
+**Response:**
+
+```json
+{
+  "data": [
+    { "id": 5, "username": "jane", "email": "jane@example.com" }
+  ]
+}
+```
+
+Returns an empty `data` array when `q` is blank.
+
+---
+
+## Validation Limits
+
+<Accordion title="Field length constraints">
+  | Field | Max length |
+  |---|---|
+  | `username` | 30 characters |
+  | `email` | 100 characters |
+  | `password` | 128 characters |
+
+  Passwords are never stored in plain text. The API hashes every password with Werkzeug's `generate_password_hash` before writing to the database.
+</Accordion>

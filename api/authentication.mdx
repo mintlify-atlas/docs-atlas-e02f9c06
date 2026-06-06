@@ -1,0 +1,216 @@
+---
+title: "Authenticate with the StockManager API"
+sidebarTitle: "Authentication"
+description: "StockManager uses Flask session cookies for authentication. Log in via POST /api/login, receive a session cookie, and include it in all subsequent requests."
+---
+
+StockManager's API uses **Flask session cookies** for authentication — there are no API keys, bearer tokens, or JWTs. When you log in successfully, the server creates a server-side session and responds with a `Set-Cookie` header. Every subsequent request must present that cookie; without it the server returns `401 Unauthenticated`. This model works transparently in browser contexts and is straightforward to replicate with any HTTP client that supports cookie jars.
+
+## Login
+
+Send credentials as JSON to `POST /api/login`. The endpoint accepts either a username or an email address in the `username` field.
+
+```
+POST /api/login
+Content-Type: application/json
+```
+
+**Request body**
+
+```json
+{
+  "username": "root",
+  "password": "yourpassword"
+}
+```
+
+**Success response — `200 OK`**
+
+```json
+{
+  "success": true,
+  "user_id": 1,
+  "username": "root",
+  "role": "root"
+}
+```
+
+The response also includes a `Set-Cookie` header containing the Flask session cookie. Store and send this cookie with every subsequent request.
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `400` | `username` or `password` field is missing or empty |
+| `401` | Credentials do not match any account |
+| `403` | Account is disabled (`status = 0`) or the account's role is not a recognised system role |
+
+## Session Cookie
+
+After a successful login the server sets a `Set-Cookie` response header. The session stores three values:
+
+| Key | Description |
+|---|---|
+| `user_id` | Integer primary key of the authenticated user |
+| `username` | Username string as supplied at login |
+| `role` | Role string — one of `root`, `admin`, or `vendedor` |
+
+<Note>
+  `session.permanent = True` is set during the HTML-based login flow (`POST /login`). When logging in through the API endpoint (`POST /api/login`) the session lifetime follows Flask's default `PERMANENT_SESSION_LIFETIME` setting. If you need a long-lived session for automation, log in via the browser UI or configure `PERMANENT_SESSION_LIFETIME` in your deployment.
+</Note>
+
+## Making Authenticated Requests
+
+### curl
+
+Use `-c` to save the cookie jar after login and `-b` to send it with subsequent requests:
+
+```bash
+# Login and save the session cookie to a file
+curl -c cookies.txt -X POST http://127.0.0.1:5000/api/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username": "root", "password": "yourpassword"}'
+
+# Use the saved cookie in subsequent requests
+curl -b cookies.txt http://127.0.0.1:5000/api/products
+```
+
+### JSON error responses for non-browser clients
+
+By default, unauthenticated requests to non-API routes return an HTML redirect to the login page. Routes under `/api/` always return JSON errors. If you are calling a non-`/api/` route from a script and want a JSON `401` instead of an HTML redirect, include the following header:
+
+```bash
+curl -b cookies.txt \
+  -H 'X-Requested-With: XMLHttpRequest' \
+  http://127.0.0.1:5000/some-route
+```
+
+The `_is_api_request()` helper in `api/auth_utils.py` checks for this header and returns `{"error": "No autenticado"}` with status `401` instead of rendering `login.html`.
+
+## Roles
+
+The `role` field returned at login determines which endpoints are accessible. Roles are defined in `data/roles.py`:
+
+| Role string | Constant | Access level |
+|---|---|---|
+| `root` | `ROLES.ROOT` | Full access to all endpoints |
+| `admin` | `ROLES.ADMIN` | Administrative access; can manage users and products |
+| `vendedor` | `ROLES.VENDOR` | Vendor access; limited to sales and product reads |
+
+Endpoints that require elevated access are protected by the `@require_role(...)` decorator from `api/auth_utils.py`. Requests from authenticated users whose role is not in the allowed list receive `403 Forbidden`.
+
+## Logout
+
+There is no `DELETE /api/session` or dedicated API logout endpoint. To invalidate the session, call:
+
+```
+GET /logout
+```
+
+This is a browser route handled by `routes/auth.py` that calls `session.clear()` and redirects to the login page. For scripted clients, call this route with your cookie jar to clear the server-side session:
+
+```bash
+curl -b cookies.txt -c cookies.txt http://127.0.0.1:5000/logout
+```
+
+## Register a New Account
+
+New users can submit a registration request without being logged in.
+
+```
+POST /api/register
+Content-Type: application/json
+```
+
+**Request body**
+
+```json
+{
+  "username": "jane",
+  "email": "jane@example.com",
+  "password": "securepassword"
+}
+```
+
+**Validation rules**
+- All three fields are required.
+- `password` must be at least 6 characters.
+- `email` must pass the `UserValidator.validate_email` format check.
+- `username` and `email` must not already exist in the database.
+
+**Success response — `201 Created`**
+
+```json
+{
+  "success": true,
+  "message": "Cuenta creada. Espera la aprobación del administrador."
+}
+```
+
+New accounts are created with `status = 0` (pending) and the `vendedor` role. They cannot log in until an administrator approves them.
+
+<Note>
+  **Approval workflow** — registrations created via `POST /api/register` are placed in a pending state (`status = 0`). An administrator must review the application and set `status = 1` before the account can be used to log in. Attempting to log in with a pending or disabled account returns `403 Forbidden`.
+</Note>
+
+## Password Reset
+
+Users who have lost their password can initiate a self-service reset without a session. The flow involves three steps:
+
+<Steps>
+  <Step title="Request a reset code">
+    Send the registered email address to `POST /api/users/reset-password`. A 6-digit code is emailed to that address and stored server-side with a 15-minute expiry.
+
+    ```bash
+    curl -X POST http://127.0.0.1:5000/api/users/reset-password \
+      -H 'Content-Type: application/json' \
+      -d '{"email": "jane@example.com"}'
+    ```
+
+    **Response — `200 OK`**
+
+    ```json
+    {"message": "Codigo enviado al correo"}
+    ```
+  </Step>
+  <Step title="Verify the code">
+    Submit both the email and the received code to `POST /api/users/validate-code`.
+
+    ```bash
+    curl -X POST http://127.0.0.1:5000/api/users/validate-code \
+      -H 'Content-Type: application/json' \
+      -d '{"email": "jane@example.com", "code": "483920"}'
+    ```
+
+    **Response — `200 OK`**
+
+    ```json
+    {"message": "Código verificado, puedes restablecer tu contraseña"}
+    ```
+
+    Returns `401` if the code is invalid or expired.
+  </Step>
+  <Step title="Set a new password">
+    Submit the email, the verified code, and the new password to `POST /api/users/reset-password/change-password`.
+
+    ```bash
+    curl -X POST http://127.0.0.1:5000/api/users/reset-password/change-password \
+      -H 'Content-Type: application/json' \
+      -d '{"email": "jane@example.com", "code": "483920", "new_password": "newsecurepass"}'
+    ```
+
+    **Response — `200 OK`**
+
+    ```json
+    {"message": "Contraseña restablecida exitosamente"}
+    ```
+
+    The reset code is deleted from the database after a successful password change.
+  </Step>
+</Steps>
+
+## Production Security
+
+<Warning>
+  The default Flask secret key in `main.py` is the single character `"a"` (`app.secret_key = os.getenv("FLASK_SECRET_KEY", "a")`). Session cookies are signed with this key. **Always override it in production** by setting the `FLASK_SECRET_KEY` environment variable to a long, randomly generated string. Running with the default key allows an attacker to forge valid session cookies.
+</Warning>

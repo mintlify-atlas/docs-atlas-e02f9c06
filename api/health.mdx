@@ -1,0 +1,84 @@
+---
+title: "Health Check Endpoint for StockManager"
+sidebarTitle: "Health"
+description: "GET /api/health returns a simple JSON status check to verify StockManager's server is running. Use it for uptime monitoring and startup readiness probes."
+---
+
+StockManager exposes a single lightweight health check endpoint that returns an immediate `200 OK` with a JSON body as soon as the server is accepting connections. It requires no authentication, makes no database queries, and carries no side effects — making it safe to call as frequently as a monitoring or orchestration system requires.
+
+## GET /api/health
+
+**Authentication:** None required
+
+**Request body:** None
+
+**Query parameters:** None
+
+### Response
+
+```json
+{"status": "Ok"}
+```
+
+| Field | Type | Value |
+|-------|------|-------|
+| `status` | string | Always `"Ok"` when the server is reachable |
+
+### Example
+
+```bash
+curl http://127.0.0.1:5000/api/health
+# {"status": "Ok"}
+```
+
+---
+
+## How StockManager uses this endpoint internally
+
+When StockManager is launched as a desktop application, `main.py` starts the Waitress WSGI server on a background daemon thread and then calls `wait_for_server()` before opening the PyWebView window. That function attempts a raw TCP connection to `127.0.0.1:5000` in a tight loop and returns as soon as the port is reachable — or raises a `RuntimeError` after **15 seconds** if the server never responds.
+
+```python
+if not wait_for_server(FLASK_HOST, FLASK_PORT, timeout=15.0):
+    raise RuntimeError("Waitress no respondió en 15 segundos.")
+```
+
+Once the check passes, the log records `boot:server_ready` with the elapsed milliseconds and the PyWebView window is created. This guarantees the UI never loads against a server that is still initialising.
+
+---
+
+## Practical uses
+
+### Uptime monitoring
+
+Point any HTTP-based uptime monitor (e.g. healthchecks.io, UptimeRobot, Grafana OnCall) at `GET /api/health`. A non-`200` response or a connection timeout indicates the server process has stopped or become unresponsive.
+
+### Docker HEALTHCHECK
+
+Add a `HEALTHCHECK` instruction to your `Dockerfile` so the container runtime can detect and restart an unhealthy StockManager instance automatically:
+
+```dockerfile
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s CMD curl -f http://localhost:5000/api/health || exit 1
+```
+
+| Option | Value | Meaning |
+|--------|-------|---------|
+| `--interval` | `30s` | Check every 30 seconds |
+| `--timeout` | `5s` | Mark unhealthy if no reply within 5 seconds |
+| `--start-period` | `10s` | Give the container 10 seconds to initialise before failures count |
+
+### CI/CD readiness gate
+
+In a CI pipeline that spins up StockManager before running integration tests, poll this endpoint rather than using a fixed `sleep`:
+
+```bash
+echo "Waiting for StockManager..."
+until curl -sf http://127.0.0.1:5000/api/health; do
+  sleep 1
+done
+echo "Server ready — running tests"
+pytest tests/integration/
+```
+
+<Tip>
+  In any automated deployment or test script, poll `/api/health` in a loop with a bounded retry count instead of relying on a fixed sleep delay. The endpoint responds the moment Waitress is ready, so polling eliminates unnecessary wait time and catches startup failures immediately.
+</Tip>

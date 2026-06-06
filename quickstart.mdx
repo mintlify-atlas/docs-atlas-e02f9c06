@@ -1,47 +1,177 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get Started with StockManager in 5 Minutes"
+sidebarTitle: "Quickstart"
+description: "Install StockManager, run the dev server, create your first product, and register a sale — all in under 5 minutes."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
-
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
-
-## Prerequisites
-
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+This guide walks you through getting StockManager running on your local machine, logging in with the default root account, adding your first product to the inventory, and recording a sale — all using the development server. By the end you'll have a working instance and a clear picture of how the REST API maps to the UI workflows. For production setup, building the desktop executable, or configuring email notifications, see the [Installation guide](/installation).
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
+
+  <Step title="Clone the repository and install dependencies">
+    Clone the StockManager repository and install its Python dependencies. The project requires Python 3.10 or newer.
 
     ```bash
-    npm install your-package
+    git clone https://github.com/InnoDev69/StockManager.git
+    cd StockManager
+    pip install -r requirements.txt
     ```
-  </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
+
+    The `requirements.txt` pins Flask 3.0, Waitress 2.1, PyWebView 6.1, Pillow, ReportLab, and python-barcode, among others. A virtual environment is strongly recommended to avoid conflicts with other Python projects on your machine.
 
     ```bash
-    your-cli init
+    python -m venv .venv
+    source .venv/bin/activate      # Linux / macOS
+    .venv\Scripts\activate         # Windows
+    pip install -r requirements.txt
     ```
   </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+
+  <Step title="Create the .env file">
+    StockManager reads configuration from a `.env` file in the project root. At minimum you need a secret key for Flask session signing.
 
     ```bash
-    your-cli start
+    # .env
+    FLASK_SECRET_KEY=change-me-to-a-long-random-string
     ```
+
+    Generate a strong value with Python:
+
+    ```bash
+    python -c "import secrets; print(secrets.token_hex(32))"
+    ```
+
+    Copy the output and paste it as the value of `FLASK_SECRET_KEY`. Without this variable the app falls back to the insecure default `"a"`, which is fine for a first test but must not be used beyond that.
   </Step>
+
+  <Step title="Start the development server">
+    Run the dev server using `run-dev.py`. This starts Flask in debug mode with hot reload enabled — any change to a Python file restarts the server automatically.
+
+    ```bash
+    python run-dev.py
+    ```
+
+    Expected output:
+
+    ```
+     * Running on http://127.0.0.1:5000
+     * Debug mode: on
+     * Restarting with stat
+    ```
+
+    The SQLite database is created automatically at `./data/stock.db` on this first launch. The `init_db()` routine creates all tables, applies any pending migrations, and inserts the default root user if none exists.
+
+    <Note>
+      `run-dev.py` uses Flask's built-in development server. Do **not** use this mode for the desktop app experience or for production deployments. Use `python main.py` for the PyWebView desktop window instead (see [Installation](/installation)).
+    </Note>
+  </Step>
+
+  <Step title="Log in with the root account">
+    Open `http://127.0.0.1:5000` in your browser. You'll be redirected to the login page. Sign in with the auto-created credentials:
+
+    - **Username:** `root`
+    - **Password:** `root1234`
+
+    You can also authenticate via the API directly. The login endpoint returns a session cookie that all subsequent API calls must include:
+
+    ```bash
+    curl -c cookies.txt -X POST http://127.0.0.1:5000/api/login \
+      -H "Content-Type: application/json" \
+      -d '{"username": "root", "password": "root1234"}'
+    ```
+
+    A successful response:
+
+    ```json
+    {
+      "success": true,
+      "user_id": 1,
+      "username": "root",
+      "role": "root"
+    }
+    ```
+
+    <Warning>
+      Change the root password immediately after your first login. The default credentials (`root` / `root1234`) are public knowledge and must not remain in place on any persistent installation.
+    </Warning>
+  </Step>
+
+  <Step title="Create your first product">
+    Products can be created through the **Inventory** section of the UI (navigate to the sidebar after logging in) or via the REST API. Only users with the `admin` or `root` role can create products.
+
+    ```bash
+    curl -b cookies.txt -X POST http://127.0.0.1:5000/api/products \
+      -H "Content-Type: application/json" \
+      -d '{
+        "barcode": "1234567890",
+        "name": "Café Molido",
+        "quantity": 100,
+        "min_quantity": 10,
+        "price": 5.99,
+        "description": "Café molido premium"
+      }'
+    ```
+
+    A successful response:
+
+    ```json
+    {
+      "message": "Producto creado exitosamente"
+    }
+    ```
+
+    The product is now visible in the inventory table. Because the initial quantity (100) is above the minimum threshold (10), no low-stock notification is triggered. A notification of type `success` is still created for the acting user confirming the product was added.
+
+    **Required fields:** `barcode`, `name`, `quantity`, `min_quantity`, `price`  
+    **Optional fields:** `description`, `expiration_date`
+  </Step>
+
+  <Step title="Register a sale">
+    Use `POST /api/sales/bulk` to record a sale. The endpoint accepts one or more items in a single transaction, deducts stock automatically, and generates a sale record with full line-item detail. Any authenticated user (vendor, admin, or root) can register sales.
+
+    First, retrieve the product ID if you don't already know it:
+
+    ```bash
+    curl -b cookies.txt "http://127.0.0.1:5000/api/items?q=Caf%C3%A9"
+    ```
+
+    Then register the sale using the product's numeric ID:
+
+    ```bash
+    curl -b cookies.txt -X POST http://127.0.0.1:5000/api/sales/bulk \
+      -H "Content-Type: application/json" \
+      -d '{
+        "items": [
+          {"item_id": 1, "quantity": 2}
+        ],
+        "payment_method": "Efectivo"
+      }'
+    ```
+
+    A successful response:
+
+    ```json
+    {
+      "ok": true,
+      "sale_id": 1,
+      "items": [
+        {
+          "item_id": 1,
+          "name": "Café Molido",
+          "quantity": 2,
+          "unit_price": 5.99,
+          "subtotal": 11.98
+        }
+      ],
+      "total": 11.98
+    }
+    ```
+
+    The `payment_method` field is a free-form string — common values used in the application are `"Efectivo"` (cash), `"Tarjeta"` (card), and `"Transferencia"` (bank transfer). After the sale, the product's stock is decremented from 100 to 98, and a low-stock check runs to see if any product has dropped below its minimum threshold.
+  </Step>
+
 </Steps>
 
 <Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
-
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
+  This quickstart uses the development server (`python run-dev.py`) which is ideal for exploring the API and testing workflows. When you're ready to deploy the full desktop application with the PyWebView window, configure environment variables, or set up email notifications for password resets, head to the [Installation guide](/installation) for complete coverage.
 </Tip>

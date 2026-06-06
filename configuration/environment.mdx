@@ -1,0 +1,98 @@
+---
+title: "Environment Variables and Server Configuration"
+sidebarTitle: "Environment"
+description: "Configure StockManager's Flask secret key, server host and port, email settings for password resets, and debug mode via environment variables."
+---
+
+StockManager reads all runtime configuration from a `.env` file in the project root. The `python-dotenv` library loads this file automatically at boot — both in `main.py` (desktop mode) and in `tools/email.py` (for email delivery). Every setting listed below can be overridden by a real environment variable already present in the shell, which takes precedence over the file.
+
+## Environment Variables
+
+### Application Security
+
+<Warning>
+  Never use the default secret key (`"a"`) in any environment where the application is
+  accessible to real users. A predictable secret key allows session cookies to be
+  forged, granting unauthorized access to any account.
+</Warning>
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `FLASK_SECRET_KEY` | **Yes** | `"a"` | Signs and verifies Flask session cookies. Use a long, random string (e.g. output of `python -c "import secrets; print(secrets.token_hex(32))"`) in production. |
+
+### Server Binding
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `FLASK_HOST` | No | `127.0.0.1` | IP address the Waitress server binds to. Set to `0.0.0.0` to accept connections from other machines on the network. |
+| `FLASK_PORT` | No | `5000` | TCP port Waitress listens on. The PyWebView window connects to this same port. |
+
+### Email (Password Resets)
+
+StockManager sends password-reset codes by email. All four variables must be set for email delivery to work; the application will raise an error at startup if they are absent and a reset is attempted.
+
+| Variable | Required | Description |
+|---|---|---|
+| `SMTP_SERVER` | **Yes** | Hostname of your SMTP relay (e.g. `smtp.gmail.com`). |
+| `SMTP_PORT` | **Yes** | SMTP port number (e.g. `465` for SMTP_SSL). |
+| `SMTP_USERNAME` | **Yes** | Login username for the SMTP server; also used as the `From` address. |
+| `SMTP_PASSWORD` | **Yes** | Password or app-specific token for SMTP authentication. |
+
+### Developer Flags
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `DEBUG` | No | unset | Set to `1` to start Flask in debug mode via `run-dev.py`. Has no effect when running `main.py` directly (debug is hardcoded to `False` there). |
+| `DB_PATH` | No | `./data/stock.db` | Override the SQLite file path in development mode. Ignored when the app is running as a compiled executable. |
+
+### Linux Display Flags
+
+These two variables are set automatically by `main.py` on Linux using `os.environ.setdefault`, so you only need to set them explicitly if you are running the server headlessly or are overriding the defaults.
+
+| Variable | Platform | Description |
+|---|---|---|
+| `PYWEBVIEW_GTK` | Linux only | Set to `1` to force the GTK backend for PyWebView. |
+| `WEBKIT_DISABLE_DMABUF_RENDERER` | Linux only | Set to `1` to disable DMA-BUF rendering in WebKitGTK, which resolves black-screen or blank-window issues on some GPU drivers. |
+
+## Sample `.env` File
+
+```ini
+# ── Required ──────────────────────────────────────────────
+FLASK_SECRET_KEY=replace-this-with-a-long-random-string
+
+# ── Server (optional) ─────────────────────────────────────
+FLASK_HOST=127.0.0.1
+FLASK_PORT=5000
+
+# ── Email – password reset ─────────────────────────────────
+SMTP_SERVER=smtp.gmail.com
+SMTP_PORT=465
+SMTP_USERNAME=your-address@gmail.com
+SMTP_PASSWORD=your-app-password
+
+# ── Development ────────────────────────────────────────────
+DEBUG=1
+DB_PATH=./data/stock.db
+```
+
+## Waitress Server Settings
+
+The following Waitress parameters are hardcoded in `main.py` and are not currently configurable via environment variables.
+
+| Setting | Value | Description |
+|---|---|---|
+| `threads` | `8` | Number of worker threads in the Waitress thread pool. |
+| `channel_timeout` | `30` s | Seconds before an idle HTTP connection is closed. |
+| `cleanup_interval` | `10` s | How often Waitress sweeps for expired channels. |
+| `MAX_CONTENT_LENGTH` | `16 MB` | Maximum allowed size for incoming request bodies (set on the Flask app). |
+
+## Background Scheduler Tasks
+
+Two periodic tasks are registered with the built-in `Scheduler` in `main.py` before the server starts:
+
+| Interval | Task | Description |
+|---|---|---|
+| Every 86 400 s (24 h) | `logger._cleanup_old_logs` | Deletes log files older than 3 days from the logs directory. |
+| Every 1 800 s (30 min) | `db._check_unique_root_user` | Verifies that exactly one ROOT-role user exists; raises a critical error if more than one is found. |
+
+The scheduler runs each task in its own daemon thread and handles exceptions internally so a failing task does not crash the server.

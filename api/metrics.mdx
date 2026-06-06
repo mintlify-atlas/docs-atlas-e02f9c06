@@ -1,0 +1,336 @@
+---
+title: "Metrics and Analytics API Endpoints"
+sidebarTitle: "Metrics"
+description: "Query StockManager's business analytics: dashboard stats, period KPIs, top products, sales heatmaps, inventory forecasts, and never-sold product reports."
+---
+
+The Metrics API exposes three endpoints that together cover every analytics need in StockManager: a lightweight dashboard summary for at-a-glance KPIs, a comprehensive business analytics object that covers revenue trends, product performance, inventory health, and vendor stats for any custom date range, and a never-sold products report for identifying dead stock. Every endpoint requires an active session; no elevated role is needed.
+
+---
+
+## Dashboard Summary
+
+### GET /api/stats
+
+Returns a compact set of current-state indicators intended for the main dashboard widgets. All values reflect the live database at the moment of the request — no date range parameter is accepted.
+
+**Auth:** any authenticated session.
+
+**Response**
+
+<ResponseField name="products" type="integer">
+  Total number of product records in the `items` table, regardless of status.
+</ResponseField>
+
+<ResponseField name="low_stock" type="integer">
+  Count of active items where `quantity <= min_quantity` and `quantity > 0`.
+</ResponseField>
+
+<ResponseField name="sales_today" type="integer">
+  Number of sale transactions (`sells` rows) recorded today (server local date).
+</ResponseField>
+
+<ResponseField name="low_stock_list" type="array">
+  Top 10 items closest to or below their minimum quantity threshold, sorted ascending by current stock.
+
+  <Expandable title="Low-stock item fields">
+    <ResponseField name="id" type="integer">Product ID.</ResponseField>
+    <ResponseField name="name" type="string">Product name.</ResponseField>
+    <ResponseField name="sku" type="string">Barcode / SKU (`barrs_code` column).</ResponseField>
+    <ResponseField name="stock" type="integer">Current quantity on hand.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="expire_soon" type="integer">
+  Count of items with an `expiration_date` within the next 7 days.
+</ResponseField>
+
+<ResponseField name="total_inventory_value" type="float">
+  Sum of `quantity × price` for all active (`status = 1`) items, rounded to two decimal places.
+</ResponseField>
+
+```bash
+curl -b cookies.txt http://localhost:5000/api/stats
+```
+
+```json
+{
+  "products": 142,
+  "low_stock": 8,
+  "sales_today": 23,
+  "low_stock_list": [
+    {"id": 17, "name": "Aceite Motor 5W-30", "sku": "7501031311309", "stock": 1},
+    {"id": 55, "name": "Filtro Aire K&N", "sku": "024844021824", "stock": 2}
+  ],
+  "expire_soon": 3,
+  "total_inventory_value": 128450.75
+}
+```
+
+---
+
+## Analytics
+
+### GET /api/metrics
+
+Returns a rich analytics object covering KPIs, time-series data, product rankings, heatmaps, inventory forecasting, and vendor performance for a specified period. When `from` and `to` are both provided they take precedence over `period`.
+
+**Auth:** any authenticated session.
+
+<ParamField query="period" type="integer">
+  Number of trailing days to analyze. Accepted values: `7`, `30`, `90`, `365`. Defaults to `7`. Ignored when `from` and `to` are both supplied.
+</ParamField>
+
+<ParamField query="from" type="string">
+  Period start date in `YYYY-MM-DD` format. Must be paired with `to`.
+</ParamField>
+
+<ParamField query="to" type="string">
+  Period end date in `YYYY-MM-DD` format. Must be paired with `from`. When both `from` and `to` are set they override `period`.
+</ParamField>
+
+**Response**
+
+<ResponseField name="kpis" type="object">
+  Core revenue and sales KPIs for the requested period, each accompanied by a percentage change relative to the equivalent preceding period.
+
+  <Expandable title="KPI fields">
+    <ResponseField name="revenue" type="float">Total revenue (sum of sale totals).</ResponseField>
+    <ResponseField name="totalSales" type="integer">Number of completed sale transactions.</ResponseField>
+    <ResponseField name="avgTicket" type="float">Average revenue per sale transaction.</ResponseField>
+    <ResponseField name="unitsSold" type="integer">Total individual units sold across all transactions.</ResponseField>
+    <ResponseField name="revenueChange" type="float">% change in revenue vs. the previous equivalent period.</ResponseField>
+    <ResponseField name="salesChange" type="float">% change in transaction count vs. previous period.</ResponseField>
+    <ResponseField name="ticketChange" type="float">% change in average ticket vs. previous period.</ResponseField>
+    <ResponseField name="unitsChange" type="float">% change in units sold vs. previous period.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="salesOverTime" type="object">
+  Day-by-day breakdown of revenue and sale counts across the requested range.
+
+  <Expandable title="salesOverTime fields">
+    <ResponseField name="labels" type="array">
+      String labels for each day. Short weekday names (`Lun`–`Dom`) when `period ≤ 7`; `DD/MM` otherwise.
+    </ResponseField>
+    <ResponseField name="revenue" type="array">Revenue value for each corresponding label date.</ResponseField>
+    <ResponseField name="sales" type="array">Transaction count for each corresponding label date.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="topProducts" type="array">
+  Best-selling products ranked by units sold during the period.
+
+  <Expandable title="Product entry fields">
+    <ResponseField name="id" type="integer">Product ID.</ResponseField>
+    <ResponseField name="name" type="string">Product name.</ResponseField>
+    <ResponseField name="sku" type="string">Barcode / SKU, or `"Sin SKU"` when absent.</ResponseField>
+    <ResponseField name="units" type="integer">Units sold during the period.</ResponseField>
+    <ResponseField name="revenue" type="float">Revenue generated by this product.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="salesByWeekday" type="array">
+  7-element array (index `0` = Monday … index `6` = Sunday) containing the total sale count for each weekday during the period.
+</ResponseField>
+
+<ResponseField name="salesByHour" type="array">
+  24-element array (index `0` = 00:00 … index `23` = 23:00) with the total sale count for each hour of day.
+</ResponseField>
+
+<ResponseField name="heatmap" type="object">
+  Sales intensity matrix combining weekday and hourly distributions.
+
+  <Expandable title="Heatmap fields">
+    <ResponseField name="data" type="array">
+      7 × 24 integer matrix. `data[day][hour]` is the estimated sale count for that day-of-week / hour combination.
+    </ResponseField>
+    <ResponseField name="days" type="array">7 Spanish weekday abbreviations: `['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']`.</ResponseField>
+    <ResponseField name="hours" type="array">Integer list `[0, 1, …, 23]`.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="inventoryForecast" type="array">
+  Up to 20 active products sorted by `daysRemaining` ascending — the items most at risk of running out. Only products with at least one unit sold during the period appear here.
+
+  <Expandable title="Forecast item fields">
+    <ResponseField name="id" type="integer">Product ID.</ResponseField>
+    <ResponseField name="name" type="string">Product name.</ResponseField>
+    <ResponseField name="sku" type="string">Barcode / SKU.</ResponseField>
+    <ResponseField name="currentStock" type="integer">Units currently on hand.</ResponseField>
+    <ResponseField name="minStock" type="integer">Configured minimum quantity threshold.</ResponseField>
+    <ResponseField name="unitsSold" type="integer">Units sold during the analysis period.</ResponseField>
+    <ResponseField name="dailyAverage" type="float">Average units sold per day over the period.</ResponseField>
+    <ResponseField name="daysRemaining" type="integer">Estimated days until stock reaches zero at current velocity. `null` if no sales were recorded.</ResponseField>
+    <ResponseField name="rotation" type="float">Units sold ÷ current stock; higher means faster turnover.</ResponseField>
+    <ResponseField name="status" type="string">`"danger"` (≤ 3 days), `"warning"` (≤ 7 days), or `"normal"`.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="criticalStocks" type="array">
+  Subset of `inventoryForecast` containing only items with `status == "danger"` (3 days or fewer of stock remaining).
+</ResponseField>
+
+<ResponseField name="insights" type="object">
+  Human-readable summary derived from the period's data.
+
+  <Expandable title="Insight fields">
+    <ResponseField name="bestDay" type="object">
+      `{name: string, revenue: float}` — the weekday with the highest revenue, or `null` if no data exists.
+    </ResponseField>
+    <ResponseField name="peakHour" type="integer">
+      Hour of day (0–23) with the highest sale count, or `null`.
+    </ResponseField>
+    <ResponseField name="topProduct" type="object">
+      `{name: string, units: integer}` — best-selling product by units, or `null`.
+    </ResponseField>
+    <ResponseField name="trend" type="string">
+      Narrative sentence describing revenue direction, e.g. `"Las ventas aumentaron 12.4% respecto al período anterior."`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="comparison" type="object">
+  Side-by-side revenue figures for current and previous periods.
+
+  <Expandable title="Comparison fields">
+    <ResponseField name="current" type="float">Revenue for the requested period.</ResponseField>
+    <ResponseField name="previous" type="float">Revenue for the preceding equivalent period.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="alerts" type="object">
+  Real-time inventory alert counts.
+
+  <Expandable title="Alert fields">
+    <ResponseField name="outOfStock" type="integer">Products with `quantity = 0`.</ResponseField>
+    <ResponseField name="lowStock" type="integer">Products at or below `min_quantity`.</ResponseField>
+    <ResponseField name="noMovement" type="integer">Active products with zero sales in the period.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="trendLine" type="object">
+  Moving-average smoothing of the daily revenue series.
+
+  <Expandable title="Trend line fields">
+    <ResponseField name="labels" type="array">Same label strings as `salesOverTime.labels`.</ResponseField>
+    <ResponseField name="values" type="array">
+      Floating-point moving-average values. Leading positions that do not yet have enough history are `null`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="vendors" type="array">
+  Per-vendor performance data for the period (structure mirrors internal `get_vendors_metrics` output).
+</ResponseField>
+
+<ResponseField name="inventory" type="object">
+  Aggregate inventory snapshot at the time of the request.
+
+  <Expandable title="Inventory summary fields">
+    <ResponseField name="totalValue" type="float">Sum of `quantity × price` for all active items.</ResponseField>
+    <ResponseField name="totalUnits" type="integer">Total units on hand across all active items in the forecast list.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="period" type="object">
+  Echo of the resolved date range used for the query.
+
+  <Expandable title="Period fields">
+    <ResponseField name="start" type="string">`YYYY-MM-DD` start date.</ResponseField>
+    <ResponseField name="end" type="string">`YYYY-MM-DD` end date.</ResponseField>
+    <ResponseField name="days" type="integer">Number of days covered.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<Tip>
+  Use `from` + `to` for fixed fiscal periods (e.g. a completed month), and `period` for rolling windows. The previous-period comparison always covers the same number of days immediately preceding the start date.
+</Tip>
+
+```bash
+# Last 30 days
+curl -b cookies.txt "http://localhost:5000/api/metrics?period=30"
+
+# Custom date range
+curl -b cookies.txt "http://localhost:5000/api/metrics?from=2024-01-01&to=2024-01-31"
+```
+
+```json
+{
+  "kpis": {
+    "revenue": 54320.50,
+    "totalSales": 312,
+    "avgTicket": 174.10,
+    "unitsSold": 891,
+    "revenueChange": 8.3,
+    "salesChange": 5.1,
+    "ticketChange": 3.0,
+    "unitsChange": 6.7
+  },
+  "salesOverTime": {
+    "labels": ["01/01", "02/01", "03/01"],
+    "revenue": [1820.00, 2105.50, 1990.00],
+    "sales": [11, 13, 12]
+  },
+  "topProducts": [
+    {"id": 5, "name": "Aceite 5W-30", "sku": "7501031311309", "units": 48, "revenue": 4320.00}
+  ],
+  "salesByWeekday": [45, 62, 58, 71, 80, 95, 30],
+  "salesByHour": [0,0,0,0,0,0,1,4,12,18,22,20,19,21,17,15,11,8,5,3,2,1,0,0],
+  "heatmap": {
+    "data": [[0,0,1],[0,0,2]],
+    "days": ["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"],
+    "hours": [0,1,2]
+  },
+  "alerts": {"outOfStock": 2, "lowStock": 7, "noMovement": 14},
+  "insights": {
+    "bestDay": {"name": "Sábado", "revenue": 9800.00},
+    "peakHour": 11,
+    "topProduct": {"name": "Aceite 5W-30", "units": 48},
+    "trend": "Las ventas aumentaron 8.3% respecto al período anterior. ¡Excelente trabajo!"
+  },
+  "comparison": {"current": 54320.50, "previous": 50155.20},
+  "period": {"start": "2024-01-01", "end": "2024-01-31", "days": 31}
+}
+```
+
+---
+
+## Dead Stock Report
+
+### GET /api/never-sold
+
+Returns every active product (`status = 1`) that has never appeared in any sale detail record — i.e., has zero historical sales of any kind, not just within a date range. Useful for identifying obsolete or unattractive stock.
+
+**Auth:** any authenticated session.
+
+**Response**
+
+<ResponseField name="products" type="array">
+  Active products with no sales history, sorted by `quantity` descending (highest stock first).
+
+  <Expandable title="Never-sold product fields">
+    <ResponseField name="id" type="integer">Product ID.</ResponseField>
+    <ResponseField name="name" type="string">Product name.</ResponseField>
+    <ResponseField name="sku" type="string">Barcode / SKU (`barrs_code`), or `null` if not set.</ResponseField>
+    <ResponseField name="stock" type="integer">Current quantity on hand.</ResponseField>
+    <ResponseField name="price" type="float">Unit sale price.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+```bash
+curl -b cookies.txt http://localhost:5000/api/never-sold
+```
+
+```json
+{
+  "products": [
+    {"id": 88, "name": "Tapa Válvula Universal", "sku": "TAP-001", "stock": 40, "price": 85.00},
+    {"id": 102, "name": "Empaque Silicón", "sku": null, "stock": 15, "price": 12.50}
+  ]
+}
+```
+
+<Note>
+  This endpoint scans the entire `details` table for any historical appearance of each product. A product that was sold once and then returned still appears as "sold" and will **not** appear in this list.
+</Note>

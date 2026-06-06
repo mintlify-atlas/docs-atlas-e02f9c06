@@ -1,0 +1,134 @@
+---
+title: "Inventory Management with Barcode and Stock Alerts"
+sidebarTitle: "Inventory"
+description: "Manage your product catalog in StockManager: add items with barcodes, set minimum stock thresholds, track expiration dates, and receive low-stock alerts."
+---
+
+StockManager's inventory module is the central hub for your product catalog. Every item in the system carries a barcode, a set of numeric limits, and a lifecycle status that controls whether it appears in sales flows. From the moment a product is added, the system tracks its quantity against a configurable minimum threshold and flags items that are running low or approaching their expiration date — giving you actionable signals before stock problems affect your customers.
+
+## Product fields
+
+Each product stored in StockManager has the following fields. Character and value limits are enforced at the API layer before any data reaches the database.
+
+| Field | Type | Limit | Required |
+|---|---|---|---|
+| `name` | string | max 25 characters | ✅ |
+| `barcode` | string | max 20 characters | ✅ |
+| `description` | string | max 200 characters | ❌ |
+| `quantity` | integer | 0 – 10,000 | ✅ |
+| `min_quantity` | integer | 0 – 1,000 | ✅ |
+| `price` | float | 0 – 1,000,000 | ✅ |
+| `expiration_date` | string (`YYYY-MM-DD`) | max 10 characters | ❌ |
+| `status` | integer | `1` = active, `0` = disabled | ✅ |
+
+`barcode` is used as the lookup key during sales registration. If you leave it blank during a CSV import, the system auto-generates a code in the format `PRD000001`.
+
+## Soft-delete pattern
+
+<Note>
+Deleting a product in StockManager does **not** remove it from the database. `DELETE /api/products/<id>` sets `status = 0`, hiding the item from all active views and preventing it from appearing in new sales. Historical sale records that reference the product are preserved. To reverse the action, send `POST /api/products/<id>/activate`, which sets `status = 1` and makes the product available again.
+</Note>
+
+This approach keeps your sales history intact and allows you to recover accidentally disabled products without any data loss.
+
+## View modes
+
+The `GET /api/products_all` endpoint accepts a `view_mode` query parameter that filters the result set server-side:
+
+| `view_mode` value | Filter applied |
+|---|---|
+| `all` (default) | All products regardless of quantity |
+| `in_stock` | `quantity > min_quantity` |
+| `low_stock` | `quantity > 0 AND quantity <= min_quantity` |
+| `out_of_stock` | `quantity = 0` |
+
+Use `in_stock` for your day-to-day product browser and `low_stock` / `out_of_stock` for replenishment workflows.
+
+## Sorting and pagination
+
+Results can be ordered by any of three fields, in either direction:
+
+- **Sort fields:** `name`, `stock`, `price`
+- **Order:** `asc` (default) or `desc`
+
+Pagination is server-side. Pass `page` (1-based) and `limit` (max 250, default 50) to step through large catalogs efficiently. The response always includes `total`, `pages`, `page`, and `limit` so your UI can render accurate page controls.
+
+## Stock alert system
+
+Every time a product is created or updated, `check_and_notify_low_stock` runs automatically. It compares each active product's `quantity` against its `min_quantity`:
+
+- If `quantity < min_quantity` and no alert has been sent yet, a `warning` notification is created for the current user and pushed over the SSE stream.
+- The `notified_low_stock` flag is set to `1` so the same alert is not repeated on every subsequent save.
+- Once the product is restocked and `quantity >= min_quantity`, the flag resets to `0`, re-arming the alert for the next time stock drops.
+
+The dashboard summary (`GET /api/stats`) returns the `low_stock` count and `low_stock_list` (the 10 most critical items by quantity) so you can see the situation at a glance.
+
+## Expiration tracking
+
+Products with an `expiration_date` set are monitored continuously. The dashboard stats endpoint (`GET /api/stats`) returns `expire_soon`, a count of active products whose expiration date falls within the next **7 days**. Use this figure to drive first-expiry-first-out workflows or to create manual notifications for your team.
+
+## API examples
+
+### Create a product
+
+```bash
+curl -X POST http://localhost:5000/api/products \
+  -H "Content-Type: application/json" \
+  -d '{
+    "barcode": "7501234567890",
+    "name": "Whole Milk 1L",
+    "description": "Full-fat pasteurized milk",
+    "quantity": 120,
+    "min_quantity": 20,
+    "price": 1.99,
+    "expiration_date": "2025-08-15"
+  }'
+```
+
+```json
+{ "message": "Producto creado exitosamente" }
+```
+
+### List products with filters
+
+```bash
+curl "http://localhost:5000/api/products_all?view_mode=low_stock&sort=stock&order=asc&page=1&limit=25"
+```
+
+```json
+{
+  "data": [
+    {
+      "id": 42,
+      "barcode": "7501234567890",
+      "name": "Whole Milk 1L",
+      "description": "Full-fat pasteurized milk",
+      "stock": 5,
+      "min_stock": 20,
+      "price": 1.99,
+      "status": 1,
+      "expiration_date": "2025-08-15",
+      "created_at": "2025-01-10 09:00:00",
+      "updated_at": "2025-07-01 14:32:00"
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "pages": 1,
+  "limit": 25
+}
+```
+
+### Disable and re-activate a product
+
+```bash
+# Disable
+curl -X DELETE http://localhost:5000/api/products/42
+
+# Re-activate
+curl -X POST http://localhost:5000/api/products/42/activate
+```
+
+<Tip>
+Use `GET /api/items?q=milk` for a fast autocomplete lookup (returns up to 10 active products matching the name or barcode). This is the same endpoint the POS sale form uses internally.
+</Tip>

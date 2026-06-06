@@ -1,0 +1,292 @@
+---
+title: "Notifications API — SSE Stream and Management"
+sidebarTitle: "Notifications"
+description: "Retrieve, create, and mark notifications in StockManager. Connect to the SSE stream for real-time push updates on low stock, sales, and admin actions."
+---
+
+The Notifications API delivers in-app alerts to StockManager users through a combination of a persistent Server-Sent Events stream and traditional REST endpoints for polling, bulk marking, and administrative creation. Notifications are per-user; every event delivered over SSE is also retrievable via the REST endpoints for clients that cannot maintain a long-lived connection. Creating and deleting notifications requires the `admin` or `root` role; reading and marking require only an active session.
+
+---
+
+## Notification Object
+
+The following fields are present on every notification object returned by any endpoint in this section.
+
+<ResponseField name="id" type="integer">
+  Primary key of the notification record.
+</ResponseField>
+
+<ResponseField name="title" type="string">
+  Short heading displayed in the notification panel.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Full body text of the notification.
+</ResponseField>
+
+<ResponseField name="type" type="string">
+  Visual category: `info`, `warning`, `error`, or `success`.
+</ResponseField>
+
+<ResponseField name="action_url" type="string">
+  Optional deep-link path (e.g. `/items/17`) the user can follow for more context. `null` when not set.
+</ResponseField>
+
+<ResponseField name="created_at" type="string">
+  ISO-8601 timestamp of when the notification was created.
+</ResponseField>
+
+<ResponseField name="is_read" type="boolean">
+  `false` until the notification is explicitly marked as read.
+</ResponseField>
+
+---
+
+## Real-time Stream
+
+### GET /api/notifications/stream
+
+Opens a long-lived **Server-Sent Events** connection. The response `Content-Type` is `text/event-stream; charset=utf-8` and the connection remains open until the client disconnects or the server replaces it with a newer one from the same user.
+
+**Auth:** any authenticated session.
+
+Only **one active stream per user** is maintained. When a second connection is opened by the same user, the server signals the first stream to close before the new one begins sending events.
+
+#### Events
+
+**`event: init`**
+
+Fired once immediately on connect. Contains the last 5 unread notifications and the total unread count.
+
+```
+event: init
+data: {"notifications": [...], "count": 3}
+```
+
+**`event: update`**
+
+Fired whenever a new notification is created for this user (triggered server-side after `POST /api/notifications/create` or any automated alert). Contains the last 10 unread notifications and the updated count.
+
+```
+event: update
+data: {"notifications": [...], "count": 4}
+```
+
+**Heartbeat**
+
+A keep-alive comment line is emitted every **25 seconds** to prevent proxy and browser timeouts.
+
+```
+: heartbeat
+```
+
+#### Event data shape
+
+Both `init` and `update` carry the same JSON structure:
+
+<ResponseField name="notifications" type="array">
+  Array of [notification objects](#notification-object). Up to 5 on `init`, up to 10 on `update`.
+</ResponseField>
+
+<ResponseField name="count" type="integer">
+  Total number of unread notifications for this user at the time of the event.
+</ResponseField>
+
+#### JavaScript example
+
+```javascript
+const es = new EventSource('/api/notifications/stream');
+
+es.addEventListener('init', (e) => {
+  const { notifications, count } = JSON.parse(e.data);
+  console.log('Unread:', count);
+  renderNotifications(notifications);
+});
+
+es.addEventListener('update', (e) => {
+  const { notifications, count } = JSON.parse(e.data);
+  // Update badge counter and notification list
+  updateBadge(count);
+  renderNotifications(notifications);
+});
+
+es.onerror = () => {
+  // Browser will automatically retry after a brief delay
+  console.warn('SSE connection lost, retrying…');
+};
+```
+
+<Note>
+  Browser-native `EventSource` automatically reconnects after network interruptions using exponential back-off. No manual reconnection logic is needed in most clients.
+</Note>
+
+---
+
+## REST Endpoints
+
+### GET /api/notifications/unread
+
+Returns the last 10 unread notifications for the authenticated user plus the total unread count. Use this for initial page load or as a fallback when SSE is unavailable.
+
+**Auth:** any authenticated session.
+
+**Response**
+
+<ResponseField name="notifications" type="array">
+  Up to 10 most recent unread [notification objects](#notification-object).
+</ResponseField>
+
+<ResponseField name="unread_count" type="integer">
+  Total number of unread notifications, which may exceed 10.
+</ResponseField>
+
+```bash
+curl -b cookies.txt http://localhost:5000/api/notifications/unread
+```
+
+```json
+{
+  "notifications": [
+    {
+      "id": 42,
+      "title": "Stock bajo",
+      "message": "Aceite 5W-30 tiene solo 2 unidades restantes.",
+      "type": "warning",
+      "action_url": "/items/5",
+      "created_at": "2024-06-15T10:23:44",
+      "is_read": false
+    }
+  ],
+  "unread_count": 3
+}
+```
+
+---
+
+### GET /api/notifications/all
+
+Returns all notifications for the authenticated user with offset-based pagination. Includes both read and unread notifications, ordered by creation date descending.
+
+**Auth:** any authenticated session.
+
+<ParamField query="limit" type="integer">
+  Maximum number of notifications to return. Defaults to `20`.
+</ParamField>
+
+<ParamField query="offset" type="integer">
+  Number of records to skip before returning results. Defaults to `0`.
+</ParamField>
+
+```bash
+# Second page of 20
+curl -b cookies.txt "http://localhost:5000/api/notifications/all?limit=20&offset=20"
+```
+
+---
+
+### POST /api/notifications/:id/read
+
+Marks a single notification as read (`is_read = true`). The notification does not need to belong to the currently authenticated user — ownership is not validated at the route level.
+
+**Auth:** any authenticated session.
+
+| Status | Meaning |
+|--------|---------|
+| `200` | `{"message": "Notificación marcada como leída"}` |
+| `500` | Unexpected database error. |
+
+```bash
+curl -X POST -b cookies.txt http://localhost:5000/api/notifications/42/read
+```
+
+---
+
+### POST /api/notifications/read-all
+
+Marks every notification belonging to the authenticated user as read in a single operation.
+
+**Auth:** any authenticated session.
+
+| Status | Meaning |
+|--------|---------|
+| `200` | `{"message": "Todas las notificaciones marcadas como leídas"}` |
+| `500` | Unexpected database error. |
+
+```bash
+curl -X POST -b cookies.txt http://localhost:5000/api/notifications/read-all
+```
+
+---
+
+## Administrative Endpoints
+
+### POST /api/notifications/create
+
+Creates a notification for a specific user. After persisting the record the server immediately signals the target user's SSE stream so the `update` event is delivered in real time.
+
+**Auth:** `admin` or `root` role required.
+
+<ParamField body="user_id" type="integer" required>
+  ID of the user who should receive the notification.
+</ParamField>
+
+<ParamField body="title" type="string" required>
+  Short heading for the notification.
+</ParamField>
+
+<ParamField body="message" type="string" required>
+  Full body text.
+</ParamField>
+
+<ParamField body="type" type="string" required>
+  Visual category: `info`, `warning`, `error`, or `success`.
+</ParamField>
+
+<ParamField body="action_url" type="string">
+  Optional deep-link path (e.g. `/items/17`). Omit or pass `null` to leave unset.
+</ParamField>
+
+| Status | Meaning |
+|--------|---------|
+| `201` | `{"message": "Notificación creada exitosamente"}` |
+| `400` | `user_id`, `title`, or `message` is missing. |
+| `500` | Unexpected database error. |
+
+```bash
+curl -X POST http://localhost:5000/api/notifications/create \
+  -b cookies.txt \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": 7,
+    "title": "Stock crítico",
+    "message": "Filtro de aire tiene menos de 3 unidades.",
+    "type": "warning",
+    "action_url": "/items/55"
+  }'
+```
+
+```json
+{"message": "Notificación creada exitosamente"}
+```
+
+---
+
+### DELETE /api/notifications/:id/delete
+
+Permanently deletes a notification record from the database.
+
+**Auth:** `admin` or `root` role required.
+
+| Status | Meaning |
+|--------|---------|
+| `200` | `{"message": "Notificación eliminada exitosamente"}` |
+| `500` | Unexpected database error. |
+
+```bash
+curl -X DELETE -b cookies.txt \
+  http://localhost:5000/api/notifications/42/delete
+```
+
+<Warning>
+  Deletion is permanent. There is no soft-delete or recycle bin for notifications. Confirm the target `id` before calling this endpoint.
+</Warning>

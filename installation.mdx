@@ -1,0 +1,262 @@
+---
+title: "Install and Configure StockManager"
+sidebarTitle: "Installation"
+description: "Step-by-step guide to install StockManager on Linux, macOS, or Windows — covering dependencies, environment variables, and first-run setup."
+---
+
+This guide covers everything you need to get StockManager installed and running from source on Linux, macOS, or Windows. It walks through system prerequisites, creating a Python virtual environment, installing Python packages, configuring environment variables, and choosing between the development server and the full desktop application mode. If you just want to take the application for a quick spin first, see the [Quickstart](/quickstart).
+
+## Prerequisites
+
+Before cloning the repository, make sure the following are available on your system:
+
+- **Python 3.10 or newer** — the application uses match statements, `tomllib`, and other features that require 3.10+. Python 3.12 is used in the official CI builds.
+- **pip** — comes bundled with Python 3.10+; run `pip --version` to confirm it's available.
+- **git** — needed to clone the repository.
+- **GTK 3 and WebKit2 (Linux only)** — PyWebView's Linux backend requires GTK 3 and the WebKit2 GTK bindings. These are system-level packages that cannot be installed via pip.
+
+Install the Linux system dependencies with your package manager before proceeding:
+
+```bash
+# Ubuntu / Debian
+sudo apt-get update
+sudo apt-get install -y \
+  python3-gi python3-gi-cairo \
+  gir1.2-gtk-3.0 gir1.2-webkit2-4.1 \
+  libgirepository-2.0-dev gcc libcairo2-dev \
+  pkg-config python3-dev
+
+# Arch Linux / Manjaro
+sudo pacman -S python-gobject gtk3 webkit2gtk-4.1
+
+# Fedora / RHEL
+sudo dnf install python3-gobject gtk3 webkit2gtk4.1
+```
+
+On **macOS** and **Windows** no extra system packages are required — PyWebView uses the platform's native WebView runtime (WebKit on macOS, WebView2 on Windows).
+
+## Installation
+
+<Steps>
+
+  <Step title="Clone the repository">
+    Clone the StockManager source code to your local machine:
+
+    ```bash
+    git clone https://github.com/InnoDev69/StockManager.git
+    cd StockManager
+    ```
+  </Step>
+
+  <Step title="Create a virtual environment (recommended)">
+    A virtual environment keeps StockManager's dependencies isolated from other Python projects and from your system Python installation.
+
+    ```bash
+    python -m venv .venv
+    ```
+
+    Activate the environment:
+
+    ```bash
+    # Linux / macOS
+    source .venv/bin/activate
+
+    # Windows (Command Prompt)
+    .venv\Scripts\activate.bat
+
+    # Windows (PowerShell)
+    .venv\Scripts\Activate.ps1
+    ```
+
+    Your shell prompt should change to show `(.venv)` when the environment is active. Remember to activate it each time you open a new terminal session.
+  </Step>
+
+  <Step title="Install Python dependencies">
+    Install all required packages from the pinned `requirements.txt`:
+
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+    The file installs:
+
+    | Package | Version | Purpose |
+    |---------|---------|---------|
+    | `Flask` | 3.0.0 | Web framework and routing |
+    | `Werkzeug` | 3.0.1 | WSGI utilities, password hashing |
+    | `waitress` | 2.1.2 | Production WSGI server |
+    | `pywebview` | 6.1 | Native desktop window wrapper |
+    | `python-dotenv` | 1.0.0 | `.env` file loading |
+    | `python-barcode` | latest | Barcode generation for products |
+    | `Pillow` | latest | Image processing |
+    | `reportlab` | latest | PDF report generation |
+    | `pytz` | latest | Timezone handling |
+    | `cffi` | 2.0.0 | C Foreign Function Interface |
+
+    On **Linux**, also install the Python GObject bindings that PyWebView needs:
+
+    ```bash
+    pip install PyGObject pycairo
+    ```
+
+    On **Windows**, install pythonnet for the WinForms-based PyWebView backend:
+
+    ```bash
+    pip install pythonnet
+    ```
+  </Step>
+
+  <Step title="Create the .env configuration file">
+    Create a `.env` file in the project root directory. This file is loaded by `python-dotenv` on startup and must not be committed to version control.
+
+    ```bash
+    # .env — minimum required configuration
+    FLASK_SECRET_KEY=replace-with-a-long-random-string
+    ```
+
+    Generate a cryptographically secure secret key:
+
+    ```bash
+    python -c "import secrets; print(secrets.token_hex(32))"
+    ```
+
+    Add optional settings as needed (see [Environment Variables](#environment-variables) below).
+  </Step>
+
+</Steps>
+
+## Environment Variables
+
+All configuration is read from the `.env` file (or from the actual environment). The table below covers every supported variable.
+
+### Required
+
+| Variable | Description |
+|----------|-------------|
+| `FLASK_SECRET_KEY` | Secret key used by Flask to sign session cookies and CSRF tokens. Must be a long, random, unpredictable string. **The application runs without this set, but defaults to `"a"`, which is insecure and must not be used in any real deployment.** |
+
+### Server
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `FLASK_HOST` | `127.0.0.1` | IP address Waitress binds to. Keep this as `127.0.0.1` unless you intentionally want to expose the server on the local network. |
+| `FLASK_PORT` | `5000` | TCP port Waitress listens on. Change this if port 5000 is already in use on your machine. |
+
+### Database
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DB_PATH` | `./data/stock.db` | Path to the SQLite database file. Only applies in development mode; in the compiled desktop build the path is determined automatically per OS. |
+
+### Email (optional)
+
+These variables enable the password-reset flow, which sends a 6-digit recovery code to the user's email address. All four must be set for email to work; if any are absent, the email sender initialises but calls will fail silently and log an error.
+
+| Variable | Description |
+|----------|-------------|
+| `SMTP_SERVER` | Hostname of your SMTP server (e.g. `smtp.gmail.com`). |
+| `SMTP_PORT` | SMTP port, typically `465` for SSL. |
+| `SMTP_USERNAME` | The email address used as the sender and for authentication. |
+| `SMTP_PASSWORD` | Password or app-specific password for SMTP authentication. |
+
+A fully populated `.env` looks like this:
+
+```bash
+# .env
+FLASK_SECRET_KEY=a1b2c3d4e5f6...   # 64 hex chars recommended
+FLASK_HOST=127.0.0.1
+FLASK_PORT=5000
+
+# Optional: email for password reset
+SMTP_SERVER=smtp.gmail.com
+SMTP_PORT=465
+SMTP_USERNAME=noreply@yourdomain.com
+SMTP_PASSWORD=your-app-password
+```
+
+<Note>
+  If you use Gmail, generate an [App Password](https://support.google.com/accounts/answer/185833) rather than your account password. Google blocks direct password authentication for SMTP when 2-Step Verification is enabled.
+</Note>
+
+## Running Modes
+
+StockManager supports two distinct running modes that serve different purposes.
+
+### Development mode
+
+```bash
+python run-dev.py
+```
+
+This starts Flask's built-in development server with `debug=True` and auto-reload enabled. The server listens on `http://127.0.0.1:5000` and can be accessed in any browser. Use this mode when developing, testing API calls, or exploring the application for the first time. Jinja2 templates are reloaded on every request, and any Python error produces a detailed stack trace in the browser.
+
+### Desktop application mode
+
+```bash
+python main.py
+```
+
+This is the full application mode. It starts Waitress (8 threads) in a background daemon thread, waits for the server to become reachable (up to 15 seconds), then opens a PyWebView window pointed at `http://127.0.0.1:5000`. The window is titled **Stockly**, opens at 1200×800, and enforces a minimum size of 800×600. The application exits cleanly when the window is closed: Waitress is shut down, the scheduler is stopped, and the SQLite connection pool is flushed.
+
+| | Development (`run-dev.py`) | Desktop app (`main.py`) |
+|-|---------------------------|------------------------|
+| Server | Flask dev server | Waitress (8 threads) |
+| Hot reload | ✅ Yes | ❌ No |
+| Debug errors in browser | ✅ Yes | ❌ No |
+| Native desktop window | ❌ No | ✅ Yes |
+| Recommended for | Development, API testing | End-user deployment |
+
+## First Run and Database Initialization
+
+On the very first startup — regardless of mode — `bd/bdInstance.py` calls `db.init_db()`, which:
+
+1. Creates the SQLite database file at the configured path (creating parent directories if necessary).
+2. Creates all tables (`users`, `items`, `sells`, `details`, `notifications`, `audit_log`, and others) using `CREATE TABLE IF NOT EXISTS` — safe to run repeatedly.
+3. Creates a set of composite indexes to optimise the sales and inventory queries.
+4. Runs incremental column migrations (`ALTER TABLE … ADD COLUMN IF NOT EXISTS`) to bring older databases up to date.
+5. Calls `__create_default_root_user()`, which inserts a root user with username `root` and password `root1234` **only if no root user already exists**.
+6. Validates that exactly one root user exists; if more than one is found, the application raises a critical error and refuses to start.
+
+The SQLite file is created at `./data/stock.db` in development mode. In the compiled desktop executable it is stored in a user-writable directory:
+
+- **Linux / macOS:** `~/.stock_manager/data/database.db`
+- **Windows:** `%APPDATA%\StockManager\data\database.db`
+
+<Note>
+  The default root credentials (`root` / `root1234`) are well-known. Log in immediately after the first launch, go to the user settings page, and change the password before allowing anyone else to access the application.
+</Note>
+
+## Linux-Specific Notes
+
+On Linux, `main.py` sets two environment variables before importing PyWebView to ensure stable GTK rendering:
+
+```python
+os.environ.setdefault("PYWEBVIEW_GTK", "1")
+os.environ.setdefault("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
+```
+
+`PYWEBVIEW_GTK=1` forces PyWebView to use the GTK/WebKit2 backend explicitly. `WEBKIT_DISABLE_DMABUF_RENDERER=1` disables the DMA-BUF renderer in WebKit, which can cause blank windows or GPU-related crashes on certain Linux GPU drivers and virtual machines. If you encounter a white or blank window on Linux, verify that both variables are set before launching the application.
+
+You can also set them manually in your shell before running:
+
+```bash
+export PYWEBVIEW_GTK=1
+export WEBKIT_DISABLE_DMABUF_RENDERER=1
+python main.py
+```
+
+## Pre-built Binaries
+
+If you prefer not to run from source, the CI pipeline builds standalone executables using PyInstaller for three platforms on every tagged release:
+
+| Platform | File |
+|----------|------|
+| Windows 10/11 (x64) | `Stockly-windows-x64.zip` |
+| Ubuntu / Debian (x64) | `Stockly-ubuntu-x64.tar.gz` |
+| Arch Linux / Manjaro (x64) | `Stockly-arch-x64.tar.gz` |
+
+Download the archive for your platform from the [GitHub Releases page](https://github.com/InnoDev69/StockManager/releases), extract it, and run the `stockly` (or `stockly.exe`) binary inside the extracted folder. No Python installation is required for the pre-built binaries.
+
+<Warning>
+  Pre-built binaries on Linux still require the GTK and WebKit2 system libraries. Install them using your distribution's package manager before launching the binary (see the [Prerequisites](#prerequisites) section above).
+</Warning>

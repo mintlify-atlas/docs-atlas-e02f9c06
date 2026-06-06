@@ -1,0 +1,94 @@
+---
+title: "Bulk Product Import via CSV File"
+sidebarTitle: "CSV Import"
+description: "Import hundreds of products into StockManager at once using a CSV file. Learn the expected format, required columns, and how to handle import errors."
+---
+
+Instead of adding products one by one through the inventory form, StockManager lets you upload a CSV file to create your entire catalog in a single operation. The import page walks you through three guided steps — file selection, data preview, and column mapping — so you can verify your data before anything is written to the database. This workflow is especially useful when migrating from a spreadsheet, a legacy POS system, or any other tool that can export CSV.
+
+## Accessing the import page
+
+Navigate to **`/import`** in your StockManager installation. The page is accessible to admin and root users. You can drag and drop a CSV file onto the upload zone or use the file browser. Only `.csv` files are accepted.
+
+## CSV format
+
+Your file should use one row per product. The first row is typically a header row — enable the **"Primera fila tiene encabezados"** checkbox (on by default) so the importer reads it as column names rather than data.
+
+The delimiter defaults to a comma (`,`). If your file uses semicolons or another separator, enter the character in the **Delimitador** field before previewing.
+
+### Required columns
+
+These four columns must be present and mapped before the import can proceed:
+
+| Column | Description | Limits |
+|---|---|---|
+| `barcode` | Product barcode or SKU | Max 20 characters |
+| `name` | Product name | Max 25 characters |
+| `quantity` | Initial stock quantity | Integer, 0–10,000 |
+| `price` | Unit selling price | Float, 0–1,000,000 |
+
+### Optional columns
+
+| Column | Description | Limits |
+|---|---|---|
+| `description` | Product description | Max 200 characters |
+| `min_quantity` | Minimum stock threshold for alerts | Integer, 0–1,000 |
+| `expiration_date` | Expiration date in `YYYY-MM-DD` format | Max 10 characters |
+
+If `min_quantity` is omitted it defaults to `0`, disabling low-stock alerts for that product. If `expiration_date` is omitted the product is treated as non-perishable.
+
+### Sample CSV file
+
+```csv
+barcode,name,description,quantity,min_quantity,price,expiration_date
+7501000000001,Whole Milk 1L,Full-fat pasteurized milk,120,20,1.99,2025-09-30
+7501000000002,Orange Juice 1L,,80,10,2.49,2025-08-15
+7501000000003,Granola Bar,Oat and honey,200,30,0.89,
+PRD000004,Specialty Tea,Loose-leaf chamomile blend,50,5,3.49,
+```
+
+## Import workflow
+
+<Steps>
+  <Step title="Select your file">
+    Go to `/import`. Drag your `.csv` file onto the upload zone or click **Seleccionar archivo**. Optionally change the delimiter character and confirm whether the first row is a header row.
+  </Step>
+  <Step title="Preview the data">
+    Click **Previsualizar**. The server parses the file and returns the first 10 rows along with a column summary. The preview table appears below the upload card so you can spot formatting problems before committing.
+  </Step>
+  <Step title="Map the columns">
+    In the **Mapeo de columnas** section, assign each required field (`barcode`, `name`, `quantity`, `price`) to the matching column from your file. The importer will attempt to auto-map columns whose headers match known synonyms (for example, `"codigo de barras"`, `"ean"`, `"upc"` all map to `barcode` automatically). Assign optional columns if present.
+  </Step>
+  <Step title="Import">
+    Click **Importar productos**. The server validates every row against the field limits and type rules, then inserts all valid products into the database. A summary is displayed showing how many products were created and any rows that were skipped with a reason.
+  </Step>
+</Steps>
+
+## Validation rules
+
+The same validation rules that apply to the manual product form are enforced during import:
+
+- `name` and `barcode` are required and cannot be blank.
+- `quantity` and `price` must be valid numbers within their respective ranges.
+- `expiration_date`, when provided, must follow `YYYY-MM-DD` exactly.
+- Field lengths that exceed the character limits cause the row to be rejected.
+- Two required columns cannot be mapped to the same CSV column.
+
+## Common errors and fixes
+
+| Error | Likely cause | Fix |
+|---|---|---|
+| `"Completa el mapeo de los campos obligatorios"` | One or more required fields (`barcode`, `name`, `quantity`, `price`) have no column assigned | Select a column for each required field in the mapping panel |
+| `"No uses la misma columna en dos campos obligatorios"` | The same CSV column is assigned to two required fields | Check the dropdowns and make each required field point to a unique column |
+| `"Respuesta inválida del servidor"` | The uploaded file could not be parsed as CSV | Open the file in a text editor and verify the delimiter matches the one entered in the Delimitador field |
+| Row skipped — `"Máximo 25 caracteres"` | The `name` value in that row exceeds the 25-character limit | Shorten the product name in your CSV and re-upload |
+| Row skipped — `"Debe ser un número entero"` | `quantity` or `min_quantity` contains a decimal or non-numeric value | Ensure those columns contain whole numbers only |
+| Row skipped — `"El valor máximo es 1000000"` | A `price` value exceeds 1,000,000 | Correct the price in your source file |
+
+<Warning>
+If your CSV contains a barcode that already exists in StockManager's database, the import will attempt to insert a duplicate and the row will fail with an integrity error. Review your catalog for existing barcodes before importing, or remove those rows from the CSV. There is no upsert (update-if-exists) mode in the current importer.
+</Warning>
+
+<Tip>
+The column auto-mapper recognises common header names in both English and Spanish: `"nombre"`, `"name"`, `"producto"` all resolve to the **Name** field; `"precio"`, `"price"`, `"valor"`, `"costo"` all resolve to **Price**. Using standard header names saves time during the mapping step.
+</Tip>

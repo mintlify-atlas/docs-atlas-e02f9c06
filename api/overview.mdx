@@ -1,0 +1,148 @@
+---
+title: "StockManager REST API — Endpoints Overview"
+sidebarTitle: "Overview"
+description: "StockManager exposes a session-based REST API at /api/. All endpoints return JSON. Learn the base URL, response format, pagination, and error codes."
+---
+
+StockManager ships a built-in REST API that lets you interact with inventory, sales, users, and analytics data programmatically. The API is served by a [Waitress](https://docs.pylonsproject.org/projects/waitress/) WSGI server embedded inside the desktop application, so it is available whenever StockManager is running — no separate server process is required. It is primarily intended for third-party integrations, automated scripts, and headless tooling such as Postman or curl.
+
+## Base URL
+
+All API routes are mounted under the `/api` prefix. With the default host and port the base URL is:
+
+```
+http://127.0.0.1:5000/api
+```
+
+The host and port are set in `main.py` via the `FLASK_HOST` and `FLASK_PORT` constants (defaults `127.0.0.1` and `5000`).
+
+## Response Format
+
+Every endpoint returns `application/json`. Successful responses carry the resource or a confirmation message in the body. Error responses always use the shape:
+
+```json
+{"error": "<human-readable message>"}
+```
+
+## Authentication
+
+The API uses **Flask session cookies**. Obtain a session by sending credentials to `POST /api/login`. The server responds with a `Set-Cookie` header; include that cookie in every subsequent request. No API keys or bearer tokens are involved. See the [Authentication](/api/authentication) page for full details.
+
+## Endpoint Groups
+
+All blueprints are registered under the `/api` prefix in `api/__init__.py` and mounted via `app.register_blueprint(api_bp, url_prefix="/api")` in `main.py`.
+
+| Group | Paths |
+|---|---|
+| **Products** | `/api/products`, `/api/products_all`, `/api/items` |
+| **Sales** | `/api/sales`, `/api/sales/bulk` |
+| **Users** | `/api/users`, `/api/login`, `/api/register` |
+| **Metrics** | `/api/stats`, `/api/metrics`, `/api/never-sold` |
+| **Notifications** | `/api/notifications/*` |
+| **Applications** | `/api/applications` |
+| **Audit** | `/api/user/<id>`, `/api/all`, `/api/entity/<type>/<id>` |
+| **Settings** | `/api/settings/profile`, `/api/settings/password` |
+| **Health** | `/api/health` |
+
+## Pagination
+
+List endpoints that can return large result sets support server-side pagination through two query parameters:
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `page` | integer | `1` | 1-based page number |
+| `limit` | integer | varies by endpoint | Maximum records per page |
+
+Paginated responses always include the following envelope alongside the `data` array:
+
+```json
+{
+  "data": [...],
+  "total": 142,
+  "page": 1,
+  "pages": 15,
+  "limit": 10
+}
+```
+
+- **`total`** — total number of records matching any active filters
+- **`pages`** — total number of pages at the requested `limit`
+- **`page`** — the current page number echoed back
+
+<Tip>
+  The `limit` for most endpoints is capped server-side (for example, `/api/products_all` caps at 250 and `/api/users` caps at 100) to prevent unbounded queries. Requests that exceed the cap are silently clamped.
+</Tip>
+
+## HTTP Status Codes
+
+| Code | Meaning |
+|---|---|
+| `200` | Success — request processed, resource returned or updated |
+| `201` | Created — new resource was successfully persisted |
+| `400` | Bad request — missing required fields or validation failure |
+| `401` | Unauthenticated — no valid session cookie present |
+| `403` | Forbidden — authenticated but role lacks permission |
+| `404` | Not found — the requested resource does not exist |
+| `409` | Conflict — duplicate value (e.g. username or email already taken) |
+| `500` | Internal server error — unexpected server-side failure |
+
+## Explore the API
+
+<CardGroup cols={2}>
+  <Card
+    title="Authentication"
+    icon="key"
+    href="/api/authentication"
+  >
+    Log in, manage session cookies, understand roles, and register new accounts.
+  </Card>
+  <Card
+    title="Products"
+    icon="box"
+    href="/api/products"
+  >
+    List, create, update, and delete products and inventory items.
+  </Card>
+  <Card
+    title="Sales"
+    icon="receipt"
+    href="/api/sales"
+  >
+    Record individual sales and submit bulk transactions.
+  </Card>
+  <Card
+    title="Users"
+    icon="users"
+    href="/api/users"
+  >
+    Manage user accounts, roles, status, and password resets.
+  </Card>
+  <Card
+    title="Metrics"
+    icon="chart-bar"
+    href="/api/metrics"
+  >
+    Retrieve dashboard stats, aggregated metrics, and never-sold product reports.
+  </Card>
+  <Card
+    title="Notifications"
+    icon="bell"
+    href="/api/notifications"
+  >
+    Read, mark, and stream real-time in-app notifications.
+  </Card>
+  <Card
+    title="Audit"
+    icon="shield-check"
+    href="/api/audit"
+  >
+    Query the audit log by user, entity type, or across all recorded actions.
+  </Card>
+  <Card
+    title="Health"
+    icon="heart-pulse"
+    href="/api/health"
+  >
+    Check that the server is running and accepting requests.
+  </Card>
+</CardGroup>
